@@ -1,0 +1,1075 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    color: #333;
+    background-color: #fdf8ed;
+}
+
+/*--------------- Header ----------------*/
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    border-bottom: 3px solid #ddd;
+    border-radius: 5px;
+    margin-bottom: 30px;
+    flex-wrap: wrap;
+}
+
+.header-left {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.agri-logo {
+    height: 50px;
+    width: auto;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform 0.3s ease;
+}
+
+.agri-logo:hover {
+    transform: scale(1.05);
+}
+
+.header-left h1 {
+    color: #4b6c2a;
+    font-size: 2rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #405a24, #86bd50);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+::-webkit-scrollbar {
+    display: none;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+}
+
+#username-display {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: #4b6c2a;
+    white-space: nowrap; 
+}
+
+.user-profile {
+    width: auto;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px;
+    background: transparent;
+    border-radius: 25px;
+    transition: all 0.3s ease;
+}
+
+.user-profile:hover {
+    transform: scale(1.1);
+}
+
+/*--------------- Crop Management ----------------*/
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 10px;
+}
+
+#current-date {
+    font-size: 1rem;
+    font-weight: 600;
+    color: #9c8d8d;
+    flex: 1;
+    min-width: 180px;
+}
+
+.main-content {
+    width: auto;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 30px;
+}
+
+.select-crop {
+    align-items: center;
+    color: #fff;
+    background-color: #2e7d32;
+    width: 200px;
+    height: 40px;
+    border: none;
+    border-radius: 10px;
+    flex-direction: row;
+    gap: 10px;
+    margin-right: 20px;
+}
+
+.crop-controls {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    flex-wrap: wrap;
+}
+
+.pump-control {
+    width: fit-content;
+    height: 45px;
+    display: inline-flexbox;
+    align-items: center;
+    gap: 10px;
+    background-color: #f1ecec;
+    padding: 6px 10px;
+    border-radius: 10px;
+}
+
+.crop-selector .pump-control {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: 220px;
+}
+
+.crop-management {
+    width: 100%;
+    background: #ffffff;
+    border-radius: 10px;
+    padding: 25px 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.08);
+}
+
+.crop-management h2,
+.current-status h2,
+.data-history h2 {
+    color: #2c3e50;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.btn:hover {
+    background: #236a6a;
+    transform: translateY(-2px);
+}
+
+.btn-secondary {
+    background: var(--secondary);
+}
+
+.btn-secondary:hover {
+    background: #3d4a5f;
+}
+
+.btn-confirm,
+.btn-add {
+    background-color: #2e7d32;
+    color: #fff;
+    height: 30px;
+    width: auto;
+    align-items: center;
+    text-align: center;
+    border: none;
+    border-radius: 9px;
+}
+/*---------------- Current Status ----------------*/
+.current-status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 20px;
+}
+
+.reading-card {
+    background: white;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.reading-card:hover {
+    transform: translateY(-5px);
+}
+
+.reading-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.reading-icon {
+    font-size: 1.5rem;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #f8f9fa;
+}
+
+/*---------------- icons on current stats ----------------*/
+.reading-icon.temperature {
+    color: #e74c3c;
+    background: #fdedec;
+}
+
+.reading-icon.moisture {
+    color: #3498db;
+    background: #ebf5fb;
+}
+
+.reading-icon.ph {
+    color: #9b59b6;
+    background: #f4ecf7;
+}
+
+.reading-icon.humidity {
+    color: #2980b9;
+    background: #eaf2f8;
+}
+
+.reading-icon.light {
+    color: #f39c12;
+    background: #fef9e7;
+}
+
+.reading-icon.pump {
+    color: #000000;
+    background: transparent;
+}
+
+.reading-card h3 {
+    color: #2c3e50;
+    font-size: 1.1rem;
+}
+
+.value {
+    font-size: 1.8rem;
+    font-weight: bold;
+    color: #3498db;
+    margin-bottom: 5px;
+}
+
+.optimal {
+    color: #7f8c8d;
+    font-size: 0.9rem;
+    margin-bottom: 5px;
+}
+
+.last-updated {
+    color: #95a5a6;
+    font-size: 0.8rem;
+}
+
+.status-message {
+    margin-top: 10px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+/*babala pop up*/
+#popup {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: #fff;
+  padding: 20px 30px;
+  border-radius: 12px;
+  width: 90%;
+  height: 150px;
+  max-width: 400px;
+  text-align: center;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+}
+
+
+#popup-btn {
+  position: absolute;  
+  bottom: 9px;   /* smaller value moves it up */
+  right: 20px;    /* stays the same */
+  background-color: green;
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.popup b {
+  color: #ec4b4b;
+}
+
+.popup-header {
+  display: flex;
+  align-items: center;  /* vertically align img and h3 */
+  justify-content: center; /* center horizontally */
+  gap: 10px;  /* space between image and text */
+}
+
+.popup-header img {
+  width: 30px;
+  height: 30px;
+}
+
+.overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 999;
+}
+
+
+/* for notif i think*/
+.status-dry {
+    background-color: #ffebee;
+    color: #c62828;
+}
+
+.status-moderate {
+    background-color: #fff3e0;
+    color: #ef6c00;
+}
+
+.status-optimal {
+    align-items: flex-end;
+    background: #c6f6d5;
+    color: #276749;
+}
+
+.status-wet {
+    background-color: #e3f2fd;
+    color: #1565c0;
+}
+
+.status-saturated {
+    background-color: #e8eaf6;
+    color: #283593;
+}
+
+/* ----------------Pump Controls ----------------*/
+.pump-control {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: row;
+    gap: 10px;
+    min-width: 150px;
+}
+
+.pump-control label {
+    align-items: center;
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #34495e;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* The switch - the box around the slider */
+.switch {
+    margin-top: 7px;
+    position: relative;
+    display: inline-block;
+    width: 60px;
+    height: 30px;
+}
+
+/* Hide default HTML checkbox */
+.switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #e9321e;
+    transition: .5s;
+}
+
+.slider:before {
+    position: absolute;
+    content: "";
+    height: 23px;
+    width: 25px;
+    left: 4px;
+    bottom: 4px;
+    background-color: rgb(255, 255, 255);
+    transition: .4s;
+}
+
+input:checked+.slider {
+    background-color: #27ae60;
+}
+
+input:checked+.slider:before {
+    transform: translateX(27px);
+}
+
+/* Rounded sliders */
+.slider.round {
+    border-radius: 40px;
+}
+
+.slider.round:before {
+    border-radius: 50%;
+}
+
+/* Pump status text on da corner */
+.pump-status {
+    font-weight: 600;
+    font-size: 1.1rem;
+}
+
+.status-on {
+    color: #27ae60;
+    font-weight: bold;
+}
+
+.status-off {
+    color: #e74c3c;
+    font-weight: bold;
+}
+
+/* ----------------History Section ----------------*/
+.history-header {
+    margin-bottom: 20px;
+}
+
+.history-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.time-filters {
+    display: flex;
+    gap: 10px;
+}
+
+.time-filter {
+    padding: 6px 12px;
+    border: 1px solid #ddd;
+    background: white;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.time-filter.active {
+    background: #77a748;
+    color: white;
+    border-color: #77a748;
+}
+
+.history-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.export-btn {
+    padding: 8px 15px;
+    background: #9b59b6;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.export-btn:hover {
+    background: #8951a1;
+}
+
+.graph-mode-btn {
+    padding: 8px 15px;
+    background: #2ecc71;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.graph-mode-btn:hover {
+    background: #3f4638;
+}
+
+/*------History Table-------*/
+.history-table table {
+    width: 100%;
+    border-collapse: collapse;
+    background: white;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.history-table th,
+.history-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+.history-table th {
+    background-color: #77a748;
+    color: white;
+    font-weight: 600;
+}
+
+.history-table tr:last-child td {
+    border-bottom: none;
+}
+
+.history-graph {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 15px;
+}
+
+.graph-container {
+    background: white;
+    border-radius: 8px;
+    padding: 15px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    height: 200px;
+}
+
+.hidden {
+    display: none;
+}
+
+/*---------------- Current crop ----------------*/
+.status-optimal {
+    background-color: #e8f5e9;
+    color: #2e7d32;
+}
+
+.current-crop {
+    margin-top: 15px;
+    padding: 15px;
+    border-radius: 5px;
+}
+
+.crop-info {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    padding: 20px;
+    border-radius: 10px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.05);
+    margin-bottom: 20px;
+}
+
+/* Add style for the new wrapper div */
+.crop-details {
+    flex-grow: 1;
+}
+
+.crop-icon {
+    font-size: 2rem;
+    color: var(--primary);
+}
+
+.crop-name {
+    font-size: 1.3rem;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.moisture-status {
+    display: inline-flex;      
+    align-items: center;      
+    justify-content: center;  
+    padding: 8px 15px;
+    background-color: #98ce9b;
+    border-radius: 20px;
+    width: auto;               
+    height: auto;              
+}
+.soil-moisture-status {
+    align-items:flex-end;
+    padding: 8px 15px;
+    border-radius: 20px;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.status-dry {
+    background: #fed7d7;
+    color: #c53030;
+}
+
+.status-moderate {
+    background: #feebcb;
+    color: #dd6b20;
+}
+
+.status-optimal {
+    background: #c6f6d5;
+    color: #276749;
+}
+
+.status-wet {
+    background: #bee3f8;
+    color: #2c5aa0;
+}
+
+.status-saturated {
+    background: #e9d8fd;
+    color: #6b46c1;
+}
+
+/* ----------------Modal Styles ----------------*/
+.modal {
+    display: none;
+    /* <-- This is the crucial line to hide it by default */
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.5);
+    /* Black overlay */
+    /* These properties will center the modal content */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    /* This display: none; overrides the display: flex; above, ensuring it's hidden. When JS sets display = 'flex', it will become visible AND centered. */
+    display: none;
+}
+
+.modal-content {
+    background: white;
+    border-radius: var(--border-radius);
+    box-shadow: var(--box-shadow);
+    width: 90%;
+    max-width: 500px;
+    padding: 25px;
+    position: relative;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.modal-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--primary);
+}
+
+.close-modal {
+    background: none;
+    border: none;
+    font-size: 1.5rem;
+    cursor: pointer;
+    color: var(--secondary);
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+    color: var(--secondary);
+}
+
+.form-input,
+.form-select {
+    width: 100%;
+    padding: 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: var(--border-radius);
+    font-size: 1rem;
+}
+
+.crop-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 15px;
+    margin-top: 15px;
+}
+
+.crop-option {
+    border: 2px solid #e2e8f0;
+    border-radius: var(--border-radius);
+    padding: 15px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between; /* To push buttons to the bottom */
+}
+
+.crop-option:hover {
+    border-color: var(--primary);
+}
+
+.crop-option.selected {
+    border-color: var(--primary);
+    background: rgba(44, 122, 123, 0.1);
+}
+
+.crop-icon-small {
+    font-size: 2rem;
+    margin-bottom: 10px;
+    color: var(--primary);
+}
+
+.crop-name-small {
+    font-weight: 600;
+    color: var(--dark);
+}
+
+.range-inputs {
+    display: flex;
+    gap: 10px;
+}
+
+.range-input {
+    flex: 1;
+}
+
+/* Limit height of history table */
+.history-table {
+    max-height: 300px;
+    overflow-y: auto;
+    display: block;
+    border: 1px solid #000000;
+    border-radius: 10px;
+}
+
+/* Prevent table width issues */
+.history-table table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+
+/* --- NEW STYLES FOR CUSTOM CROP ACTIONS --- */
+
+.crop-option.custom {
+    padding-bottom: 5px; /* Adjust padding for button area */
+}
+
+.crop-actions {
+    margin-top: 10px;
+    display: flex;
+    justify-content: space-between;
+    gap: 5px;
+}
+
+.crop-actions button {
+    padding: 5px 10px;
+    font-size: 0.8rem;
+    border-radius: 5px;
+    border: none;
+    cursor: pointer;
+    width: 100%; /* For full width within the container */
+    margin: 0;
+}
+
+.crop-actions .edit-btn {
+    background-color: #f39c12; /* Orange for Edit */
+    color: white;
+}
+
+.crop-actions .edit-btn:hover {
+    background-color: #e67e22;
+}
+
+/* General Delete Button Style (for the modal) */
+.btn-delete {
+    background-color: #e74c3c; /* Red color for delete */
+    color: #fff;
+    height: 40px;
+    width: auto;
+    align-items: center;
+    text-align: center;
+    border: none;
+    border-radius: 9px;
+    padding: 0 15px;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+.btn-delete:hover {
+    background-color: #c0392b;
+}
+
+
+footer {
+    width: auto;
+    padding: 15px 0;
+    background-color: #2e7d32;
+    color: #ffffff;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+@media (max-width: 768px) {
+    body {
+        background-color: #fdf8ed;
+        padding: 0 10px;
+    }
+
+    /* Header: logo, title, and profile icon centered */
+    header {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .agri-logo {
+        height: 60px;
+        gap: 5px;
+    }
+
+    .header-left h1 {
+        font-size: 1.4rem;
+        text-align: center;
+        color: #4b6c2a;
+    }
+
+    .header-right img {
+        height: 35px;
+        width: 35px;
+    }
+
+    /* Make all sections stack neatly */
+    .main-content {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    h2 {
+        font-size: 1.2rem;
+        margin-bottom: 15px;
+    }
+
+    /* Cards and grids simplified */
+    .current-status-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+
+    .reading-card {
+        border-radius: 10px;
+        padding: 15px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        text-align: center;
+    }
+
+    .reading-header {
+        justify-content: center;
+        text-align: center;
+    }
+
+    .reading-card h3 {
+        font-size: 1rem;
+    }
+
+    .value {
+        font-size: 1.3rem;
+    }
+
+    /* Device management cards */
+    .device-item {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        padding: 12px;
+        border-radius: 8px;
+        background: #f9f9f9;
+    }
+
+    .device-actions {
+        width: 100%;
+        justify-content: flex-end;
+    }
+
+    /* History table scrolls horizontally */
+    .history-table {
+        overflow-x: auto;
+        border-radius: 10px;
+    }
+
+    .history-table table {
+        min-width: 700px;
+        margin-bottom: 25px;
+    }
+
+    /* Buttons cleaner and full-width */
+    button,
+    .action-btn,
+    .export-btn,
+    .graph-mode-btn,
+    .submit-btn,
+    .delete-btn {
+        width: 100%;
+        border-radius: 8px;
+        padding: 10px;
+        font-size: 0.95rem;
+    }
+
+    /* Modal centered better */
+    .modal-content {
+        width: 90%;
+        padding: 20px;
+    }
+
+    .form-row {
+        grid-template-columns: 1fr;
+    }
+
+    footer {
+        text-align: center;
+        justify-content: center;
+        align-items: center;
+        display: flex;
+        width: autop;
+        padding: 10px;
+        display: flex;
+        margin-top: 20px;
+    }
+
+     .crop-info {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .moisture-status {
+        width: 100%;
+        justify-content: center;
+        text-align: center;
+        padding: 10px;
+        height: auto;
+        font-size: 0.9rem;
+        border-radius: 15px;
+    }
+    .soil-moisture-status {
+        font-size: 0.85rem;
+    }
+}
+
+/* Extra compact for very small screens */
+@media (max-width: 480px) {
+    .header-left h1 {
+        font-size: 1.2rem;
+    }
+
+    .agri-logo {
+        background: transparent;
+        height: 60px;
+        gap: 5px;
+        align-items: center;
+    }
+
+
+    .reading-card {
+        text-align: center;
+    }
+
+    .value {
+        font-size: 1.2rem;
+    }
+
+    .current-crop {
+        flex-direction: column;
+        gap: 15px;
+        align-items: flex-start;
+    }
+
+     .moisture-status {
+        width: 100%;
+        font-size: 0.85rem;
+        padding: 8px;
+        border-radius: 12px;
+    }
+
+    .soil-moisture-status {
+        font-size: 0.8rem;
+    }
+
+    #popup-btn {
+        font-size: 0.95rem;
+        padding: 12px;
+  }
+    button {
+        width: 60px;
+        font-size: 0.9rem;
+        padding: 8px;
+    }
+
+    .crop-actions {
+        flex-direction: column;
+    }
+
+    .crop-actions button {
+        margin-top: 5px;
+    }
+
+    footer {
+        display: flex;
+        text-align: center;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        padding: 15px;
+    }
+}
