@@ -46,8 +46,21 @@ const dbPath = 'sensorData';
 function preventBack() {
     window.history.forward();
 }
-setTimeout(preventBack, 0);
-window.onunload = function () {
+// 1. Modern replacement for onunload
+window.addEventListener('pagehide', (event) => {
+    console.log("Cleaning up session view...");
+});
+
+// 2. The proper way to handle the "Back" button after logout
+window.onload = function() {
+    if (typeof window.history.pushState === "function") {
+        window.history.pushState("jt656", null, null);
+        window.onpopstate = function() {
+            window.history.pushState('jt656', null, null);
+            // Optional: Force a redirect to login if they try to go back
+            window.location.href = "/login"; 
+        };
+    }
 };
 
 //-------------------------------------Global Variables let---------------------------
@@ -129,13 +142,6 @@ function selectCropFromFirebase(cropId) {
     listenToSelectedCrop(cropId);
     localStorage.setItem("selectedCropId", cropId);
 }
-
-const savedCropId = localStorage.getItem("selectedCropId");
-if (savedCropId) {
-    listenToSelectedCrop(savedCropId);
-}
-
-
 
 //------------------------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', function () {
@@ -347,10 +353,8 @@ function showOfflineState() {
 }
 // Use the existing 'db' instance
 // The listener that runs every time data changes
-
 //DONT ERASE THIS MUNA
 //const readingsRef = query(ref(db, 'sensorData'), limitToLast(20));
-
 /*onValue(readingsRef, (snapshot) => {
     let historyDataArray = [];
     // ... rest of your snapshot.forEach and data processing ...
@@ -381,73 +385,6 @@ function showOfflineState() {
 }, (error) => {
     console.error("Firebase History Data Listener Error: ", error);
 });*/
-
-// HEARBEAT LOGIC WITHIN DATA LISTENER
-/*
-    onValue(readingsQuery, (snapshot) => {
-        if (snapshot.exists()) {
-            const data = snapshot.val();
-            const readings = Object.values(data);
-            const latestReading = readings[readings.length - 1];
-
-            updateHistoryTable(readings);
-            updateCharts(readings);
-
-            // --- HEARTBEAT LOGIC ---
-            const currentTime = Date.now();
-            const dataTime = latestReading.timestamp; // Ensure your Arduino sends 'timestamp'
-            const fiveMinutes = 5 * 60 * 1000; // 5 minutes in milliseconds
-
-            if (currentTime - dataTime > fiveMinutes) {
-                // Data is too old - Hardware is likely offline
-                showOfflineState();
-            } else {
-                // Data is fresh - Hardware is online
-                updateCurrentReadings(latestReading);
-            }
-
-        } else {
-            showOfflineState();
-        }
-    }, (error) => {
-        console.error("Firebase error:", error);
-    });
-
-    // New function to clear the dashboard
-    function showOfflineState() {
-        const ids = ['current-temperature', 'current-soil-moisture', 'current-humidity', 'current-ph-level'];
-        ids.forEach(id => {
-            document.getElementById(id).textContent = "--";
-        });
-
-        // Update status text colors to red
-        document.querySelectorAll('.status-message').forEach(el => {
-            el.textContent = "Offline";
-            el.style.color = "#e74c3c";
-        });
-    }
-
-}*/
-/*
-onValue(readingsQuery, (snapshot) => {
-        const data = snapshot.val();
-        if (data) {
-            const dataArray = Object.keys(data).map(key => ({
-                id: key,
-                ...data[key]
-            }));
-            
-            // Sort by timestamp to ensure charts look correct
-            dataArray.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-            updateDashboard(dataArray);
-            updateHistoryTable(dataArray);
-        }
-    }, (error) => {
-        console.error("Firebase read failed: ", error);
-    });
-}
-*/
 
 //-------------------------------History Table Time-------------------------------
 /**
@@ -542,7 +479,6 @@ function updateLightStatus(status) {
         lightOptimalElement.textContent = ' ';
     }
 }
-
 function updateCurrentDate() {
     const now = new Date();
     const options = {
@@ -554,9 +490,6 @@ function updateCurrentDate() {
     document.getElementById('current-date').textContent =
         now.toLocaleDateString('en-US', options);
 }
-
-
-
 // **NEW FUNCTION** to load custom crops from localStorage
 function loadAllCropData() {
     const customCropsJson = localStorage.getItem('customCrops');
@@ -580,7 +513,6 @@ function loadAllCropData() {
         });
     }
 }
-
 // **NEW FUNCTION** to save custom crops to localStorage
 function saveCustomCrops(customCrops) {
     localStorage.setItem('customCrops', JSON.stringify(customCrops));
@@ -588,7 +520,6 @@ function saveCustomCrops(customCrops) {
     // Re-merge data to update the in-memory cache
     allCropData = { ...PREDEFINED_CROP_DATA, ...customCrops };
 }
-
 // **MODIFIED**: Set crop and update optimal ranges
 function setCrop(cropKey, cropInfo) {
     currentCropKey = cropKey;
@@ -609,7 +540,6 @@ function setCrop(cropKey, cropInfo) {
     document.getElementById('humidityOptimal').textContent =
         `${cropInfo.humidity.min}-${cropInfo.humidity.max}%`;
 }
-
 function initializeEventListeners() {
     initializeModals();
     initializeTimeFilters();
@@ -655,7 +585,6 @@ function initializeModals() {
             event.target.closest('.modal').style.display = 'none';
         });
     });
-
     // ---  Close Modals (by clicking outside) ---
     window.addEventListener('click', (event) => {
         if (event.target === selectCropModal) {
@@ -668,9 +597,6 @@ function initializeModals() {
             editDeleteCropModal.style.display = 'none';
         }
     });
-
-    // --- Crop Selection Logic - Simplified, managed by renderCropOptions
-
     // ---  Confirm Crop Selection Button ---
     document.getElementById('confirmCropBtn').addEventListener('click', () => {
         // Find the currently selected crop (which now includes custom ones)
@@ -684,7 +610,6 @@ function initializeModals() {
             alert('Please select a crop');
         }
     });
-
     // ---  Add Custom Crop Form ---
     document.getElementById('addCropForm').addEventListener('submit', (e) => {
         e.preventDefault();

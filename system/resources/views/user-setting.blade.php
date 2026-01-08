@@ -20,7 +20,7 @@
           <div class="logo-title">
             
             <img src="{{ asset('images/LOGO.png') }}" class="agri-logo" alt="AgriKnows Logo"
-              onclick="window.location.href='/welome'">
+              onclick="window.location.href='/welcome'">
           </div>
           <h1>AGRIKNOWS</h1>
         </div>

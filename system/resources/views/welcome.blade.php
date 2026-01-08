@@ -4,14 +4,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-   <!-- <script src="/js/login.js" defer type="module"></script> -->
     <title>ArgiKnows Homepage</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="{{ asset('css/home.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 </head>
-
 <body>
 
     </script>
@@ -54,10 +52,8 @@
                                         class="slider round"></span></label>
                             </div>
                         </div>
-
                     </div>
                 </section>
-
                 <div class="current-crop">
                     <div class="crop-info">
                         <div class="crop-details">
@@ -70,9 +66,7 @@
                             </p>
                         </div>
                     </div>
-
             </section>
-
             <!----------------------------------------notification--------------------------------------->
             <section class="notif">
                 <div id="popup" class="popup hidden">
