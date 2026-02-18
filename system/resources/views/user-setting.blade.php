@@ -25,9 +25,6 @@
           <h1>AGRIKNOWS</h1>
         </div>
         <div class="header-right">
-            <span id="username-display">
-              {{ session('user.username', 'Guest') }}
-            </span>
           <img src="{{ asset('images/profile.png') }}" class="user-profile" alt="profile">
         </div>
       </header>
@@ -43,12 +40,16 @@
           </svg>
 
           <div class="form-row">
-            <label>Username</label>
-            <input type="text" value="" id="user-username" />
+            <label>
+              Username
+              <input type="text" value="" id="user-username" />
+            </label>
           </div>
           <div class="form-row">
-            <label>Email</label>
-            <input type="email" value="" id="user-email" />
+            <label>
+              Email
+              <input type="email" value="" id="user-email" />
+            </label>
           </div>
         </section>
 
@@ -59,27 +60,33 @@
           </svg>
 
          <div class="form-row">
-            <label>Kasalukuyang Password</label>
-            <div class="password-input-container">
-              <input type="password" value="" id="current-password" placeholder="Enter current password" />
-              <span class="password-toggle" data-target="current-password">🙈</span>
-            </div>
+            <label for="current-password">
+              Kasalukuyang Password
+              <div class="password-input-container">
+                <input type="password" value="" id="current-password" placeholder="Enter current password" />
+                <span class="password-toggle" data-target="current-password">🙈</span>
+              </div>
+            </label>
           </div>
           
           <div class="form-row">
-            <label>Bagong Password</label>
-            <div class="password-input-container">
+            <label for="new-password">
+              Bagong Password
+              <div class="password-input-container">
               <input type="password" id="new-password" placeholder="Enter new password" />
               <span class="password-toggle" data-target="new-password">🙈</span>
             </div>
+            </label>
           </div>
           
           <div class="form-row">
-            <label>kumpirmahin ang Password</label>
-            <div class="password-input-container">
+            <label for="confirm-password">
+              kumpirmahin ang Password
+              <div class="password-input-container">
               <input type="password" id="confirm-password" placeholder="Confirm new password" />
               <span class="password-toggle" data-target="confirm-password">🙈</span>
             </div>
+            </label>
           </div>
           
           <button class="btn" id="save-password-btn">Save Password</button>

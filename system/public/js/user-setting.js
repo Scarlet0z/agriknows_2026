@@ -7,26 +7,62 @@ import {
   reauthenticateWithCredential,
   EmailAuthProvider,
   updateEmail, 
-  updateProfile
+  updateProfile,
+  setPersistence,
+  browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
 
-function preventBack(){window.history.forward()};
-setTimeout("preventBack()",0);
-window.onunload=function(){null;}
+// Use pagehide instead of onunload to avoid the violation error
+window.addEventListener('pagehide', (event) => {
+    // This runs when the user leaves the page, without triggering the violation
+});
+
+// A more reliable "Back Button" trap
+const backButtonTrap = () => {
+    // Push a state so there is something to "pop"
+    window.history.pushState(null, null, window.location.href);
+
+    window.onpopstate = function() {
+        // If they click back, push them forward again immediately
+        window.history.go(1);
+    };
+};
+
+// Initialize the trap
+backButtonTrap();
 
 // Your web app's Firebase configuration 
 const firebaseConfig = {
-  apiKey: "AIzaSyDxTSnDc-z4wJ4fL9zf3kB3uuvZjcISNjQ",
-  authDomain: "login-agriknows.firebaseapp.com",
-  projectId: "login-agriknows",
-  storageBucket: "login-agriknows.firebasestorage.app",
-  messagingSenderId: "281355587751",
-  appId: "1:281355587751:web:fb479b62b5036b44b68b82",
+    apiKey: "AIzaSyCq4lH4tj4AS9-cqvM29um--Nu4v2UdvZw",
+    authDomain: "agriknows-data.firebaseapp.com",
+    databaseURL: "https://agriknows-data-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "agriknows-data",
+    storageBucket: "agriknows-data.firebasestorage.app",
+    messagingSenderId: "922008629713",
+    appId: "1:922008629713:web:5cf15ca9d47036b9a8f0f0"
 };
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+
+
+setPersistence(auth, browserLocalPersistence)
+    .then(() => {
+        console.log("✅ Auth persistence set to LOCAL");
+    })
+    .catch((error) => {
+        console.error("❌ Persistence error:", error);
+    });
+
+onAuthStateChanged(auth, (user) => {
+    if (user) {
+        console.log("✅ User logged in:", user.uid);
+        console.log("Email:", user.email);
+    } else {
+        console.log("❌ No user logged in");
+    }
+});
 
 // Get element references
 const emailInput = document.getElementById('user-email');
@@ -45,18 +81,24 @@ const passwordToggles = document.querySelectorAll('.password-toggle');
 let currentUser = null;
 
 // This checks if the user is logged in every time the page loads
-onAuthStateChanged(auth, (user) => {
+onAuthStateChanged(auth, async (user) => {
   if (user) {
     currentUser = user;
-    console.log("Data from Firebase:", user.displayName, user.email);
+    
+    // Try Auth Profile first
+    let displayName = user.displayName;
 
-    // Use value property to set the text inside the boxes
-    // We use || '' to ensure it doesn't say "undefined" if empty
-    usernameInput.value = user.displayName || ""; 
+    // If Auth Profile is empty, fetch from Realtime Database
+    if (!displayName) {
+        const dbRef = ref(getDatabase(), `users/${user.uid}/username`);
+        const snapshot = await get(dbRef);
+        if (snapshot.exists()) {
+            displayName = snapshot.val();
+        }
+    }
+
+    usernameInput.value = displayName || ""; 
     emailInput.value = user.email || "";
-
-  } else {
-    console.log("No user session found");
   }
 });
 

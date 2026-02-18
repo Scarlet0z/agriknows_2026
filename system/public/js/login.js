@@ -10,14 +10,19 @@ import {
 
 //web app's Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyDxTSnDc-z4wJ4fL9zf3kB3uuvZjcISNjQ",
-  authDomain: "login-agriknows.firebaseapp.com",
-  projectId: "login-agriknows",
-  storageBucket: "login-agriknows.firebasestorage.app",
-  messagingSenderId: "281355587751",
-  appId: "1:281355587751:web:fb479b62b5036b44b68b82",
+    apiKey: "AIzaSyCq4lH4tj4AS9-cqvM29um--Nu4v2UdvZw",
+    authDomain: "agriknows-data.firebaseapp.com",
+    databaseURL: "https://agriknows-data-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "agriknows-data",
+    storageBucket: "agriknows-data.firebasestorage.app",
+    messagingSenderId: "922008629713",
+    appId: "1:922008629713:web:5cf15ca9d47036b9a8f0f0"
 };
 
+
+// Initialize Firebase
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const auth = getAuth(app);
 
 
 //show pass
@@ -41,9 +46,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 
-// Initialize Firebase
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-const auth = getAuth(app);
+
 
 // --- ADD THIS: Google Sign-In Logic ---
 const googleLoginBtn = document.getElementById("google-login-btn");

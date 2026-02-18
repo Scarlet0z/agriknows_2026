@@ -29,7 +29,7 @@
           @csrf
           <div class="field input">
               <label for="email">Email</label>
-              <input type="email" name="email" id="email" required>
+              <input type="email" name="email" id="email" autocomplete="email" required>
           </div>
 
           <div class="field input password-field">

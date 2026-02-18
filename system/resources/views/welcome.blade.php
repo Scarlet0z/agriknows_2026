@@ -11,10 +11,6 @@
 
 </head>
 <body>
-
-    </script>
-    <script type="text/javascript"
-        src="//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit"></script>
     <div class="container">
 
 
@@ -26,9 +22,6 @@
 
             <div class="header-right">
                 <div class="header-right">
-                <span id="username-display">
-                    {{ session('user.username', 'Guest') }}
-                </span>
                 <img src="{{ asset('images/profile.png') }}" class="user-profile" alt="User Profile"
                     onclick="window.location.href='{{ url('/user-setting') }}'">
             </div>
@@ -90,7 +83,7 @@
                     </div>
                     <p> Pumili ng isang pananim upang itakda ang pinakamainam na kondisyon. Maaaring i-edit ang mga
                         pasadyang pananim.</p>
-                    <div class="crop-grid">
+                    <div class="crop-grid" id="cropGrid">
                         <div class="crop-option" data-crop="corn">
                             <i class="fas fa-seedling crop-icon-small"></i>
                             <div class="crop-name-small">Corn</div>
@@ -111,6 +104,7 @@
                             <i class="fas fa-seedling crop-icon-small"></i>
                             <div class="crop-name-small">Onion</div>
                         </div>
+        
                     </div>
                     <button id="confirmCropBtn" class="btn-confirm" style="width: 100%; margin-top: 20px;">
                         <i class="fas fa-check"></i> Kumpirmahin
@@ -126,53 +120,63 @@
                     </div>
                     <form id="addCropForm">
                         <div class="form-group">
-                            <label class="form-label" for="customCropName">Pangalan ng Pananim</label>
-                            <input type="text" id="customCropName" class="form-input" placeholder="Enter crop name"
+                            <label class="form-label" for="CropName">Pangalan ng Pananim</label>
+                                <input type="text" id="CropName" class="form-input" placeholder="Enter crop name"
                                 required>
                         </div>
-                        <div class="form-group">
-                            <label class="form-label">Saklaw ng Temperatura
-                                (°C)</label>
+                       <div class="form-group">
+                            <span class="form-label">Saklaw ng Temperatura (°C)</span>
                             <div class="range-inputs">
-                                <input type="number" id="tempMin" class="form-input range-input" placeholder="Min"
-                                    required>
-                                <input type="number" id="tempMax" class="form-input range-input" placeholder="Max"
-                                    required>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Saklaw ng pagkabasa ng lupa
-                                (%)</label>
-                            <div class="range-inputs">
-                                <input type="number" id="moistureMin" class="form-input range-input" placeholder="Min"
-                                    required>
-                                <input type="number" id="moistureMax" class="form-input range-input" placeholder="Max"
-                                    required>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Saklaw ng pH</label>
-                            <div class="range-inputs">
-                                <input type="number" step="0.1" id="phMin" class="form-input range-input"
-                                    placeholder="Min" required>
-                                <input type="number" step="0.1" id="phMax" class="form-input range-input"
-                                    placeholder="Max" required>
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label class="form-label">Saklaw ng Halumigmig
-                                (%)</label>
-                            <div class="range-inputs">
-                                <input type="number" id="humidityMin" class="form-input range-input" placeholder="Min"
-                                    required>
-                                <input type="number" id="humidityMax" class="form-input range-input" placeholder="Max"
-                                    required>
+                                <label for="tempMin"></label>
+                                <input type="number" id="tempMin" name="tempMin" class="form-input range-input" placeholder="Min" autocomplete="off" required>
+                                
+                                <label for="tempMax"></label>
+                                <input type="number" id="tempMax" name="tempMax" class="form-input range-input" placeholder="Max" autocomplete="off" required>
                             </div>
                         </div>
 
-                        <button type="submit" class="btn-add" style="width: 100%; margin-top: 10px;">
-                            <i class="fas fa-check" id=""></i>Kumpirmahin
+                        <div class="form-group">
+                            <span class="form-label">Saklaw ng pagkabasa ng lupa (%)
+                            </span>
+                            <div class="range-inputs">
+                                <label for="moistureMin"></label>
+                                <input type="number" id="moistureMin" name="moistureMin" class="form-input range-input" placeholder="Min" autocomplete="off" required>
+                                
+                                <label for="moistureMax"></label>
+                                <input type="number" id="moistureMax" name="moistureMax" class="form-input range-input" placeholder="Max" autocomplete="off" required>
+                            </div>
+                        </div>
+
+                         <div class="form-group">
+                            <span class="form-label">Saklaw ng pH
+                            </span>
+                            <div class="range-inputs">
+                                <label for="phMin"></label>
+                                <input type="number" step="0.1" id="phMin" class="form-input range-input" placeholder="Min" required>
+                                
+                                <label for="phMax"></label>
+                                <input type="number" step="0.1" id="phMax" class="form-input range-input" placeholder="Max" required>
+                            </div>
+                        </div>
+
+                         <div class="form-group">
+                            <span class="form-label">Saklaw ng Halumigmig (%)
+                            </span>
+                            <div class="range-inputs">
+                                <label for="humidityMin"></label>
+                                <input type="number" id="humidityMin" class="form-input range-input" placeholder="Min"
+                                        required>
+                                
+                                <label for="humidityMax"></label>
+                                <input type="number" id="humidityMax" class="form-input range-input" placeholder="Max"
+                                        required>
+                            </div>
+                        </div>
+
+                        <button type="button" class="btn-add" style="width: 100%; margin-top: 10px;" id="saveBtn">
+                            <i class="fas fa-check"></i> Kumpirmahin
                         </button>
+
                     </form>
                 </div>
             </div>
@@ -191,40 +195,48 @@
                                 required>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Saklaw ng Temperatura</label>
-                            <div class="range-inputs">
-                                <input type="number" id="editTempMin" class="form-input range-input" placeholder="Min"
-                                    required>
-                                <input type="number" id="editTempMax" class="form-input range-input" placeholder="Max"
-                                    required>
-                            </div>
+                            <label class="form-label">
+                                Saklaw ng Temperatura
+                                <div class="range-inputs">
+                                    <input type="number" id="editTempMin" class="form-input range-input" placeholder="Min"
+                                        required>
+                                    <input type="number" id="editTempMax" class="form-input range-input" placeholder="Max"
+                                        required>
+                                </div>
+                            </label>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Saklaw ng Pagkabasa ng luba</label>
-                            <div class="range-inputs">
-                                <input type="number" id="editMoistureMin" class="form-input range-input"
-                                    placeholder="Min" required>
-                                <input type="number" id="editMoistureMax" class="form-input range-input"
-                                    placeholder="Max" required>
-                            </div>
+                            <label class="form-label">
+                                Saklaw ng Pagkabasa ng luba
+                                 <div class="range-inputs">
+                                    <input type="number" id="editMoistureMin" class="form-input range-input"
+                                        placeholder="Min" required>
+                                    <input type="number" id="editMoistureMax" class="form-input range-input"
+                                        placeholder="Max" required>
+                                </div>
+                            </label>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Saklaw ng pH</label>
-                            <div class="range-inputs">
-                                <input type="number" step="0.1" id="editPhMin" class="form-input range-input"
-                                    placeholder="Min" required>
-                                <input type="number" step="0.1" id="editPhMax" class="form-input range-input"
-                                    placeholder="Max" required>
-                            </div>
+                            <label class="form-label">
+                                Saklaw ng pH
+                                <div class="range-inputs">
+                                    <input type="number" step="0.1" id="editPhMin" class="form-input range-input"
+                                        placeholder="Min" required>
+                                    <input type="number" step="0.1" id="editPhMax" class="form-input range-input"
+                                        placeholder="Max" required>
+                                </div>
+                            </label>
                         </div>
                         <div class="form-group">
-                            <label class="form-label">Saklaw ng Halumigmig</label>
-                            <div class="range-inputs">
-                                <input type="number" id="editHumidityMin" class="form-input range-input"
-                                    placeholder="Min" required>
-                                <input type="number" id="editHumidityMax" class="form-input range-input"
-                                    placeholder="Max" required>
-                            </div>
+                            <label class="form-label">
+                                Saklaw ng Halumigmig
+                                <div class="range-inputs">
+                                    <input type="number" id="editHumidityMin" class="form-input range-input"
+                                        placeholder="Min" required>
+                                    <input type="number" id="editHumidityMax" class="form-input range-input"
+                                        placeholder="Max" required>
+                                </div>
+                            </label>
                         </div>
 
                         <button type="submit" class="btn-confirm" style="width: 100%; margin-top: 10px;">
@@ -303,6 +315,7 @@
                             <button class="time-filter" data-time="6h">6 Hours</button>
                             <button class="time-filter" data-time="24h">24 Hours</button>
                             <button class="time-filter" data-time="7d">7 Days</button>
+                            <button class="time-filter" data-time="all">All Data</button>
                         </div>
 
                         <div class="history-actions">
@@ -310,14 +323,17 @@
                                 <i class="fas fa-file-csv"></i> Export Data
                             </button>
                             <button id="graph-mode-toggle" class="graph-mode-btn">
-                                <i class="fas fa-chart-bar"></i> Graph Mode
-                            </button>
+                                <i class="fas fa-chart-bar"></i> Graph Mode</button>
                         </div>
                     </div>
                 </div>
 
                 <div id="history-table" class="history-table">
-                    <table>
+                    <div class="history-loading">
+                        <i class="fas fa-spinner"></i>
+                        <p>Naglo-load ng data...</p>
+                    </div>
+                    <table style="display: none;">
                         <thead>
                             <tr>
                                 <th>Araw at Oras</th>
@@ -348,6 +364,12 @@
                     </div>
                 </div>
             </section>
+            
+            <!-- Refresh Indicator -->
+            <div class="refresh-indicator" id="refresh-indicator">
+                <i class="fas fa-sync-alt"></i>
+                <span>Nag-uupdate...</span>
+            </div>
         </div>
     </div>
 

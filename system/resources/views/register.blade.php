@@ -6,7 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AgriKnows Sign up</title>
   <link rel="stylesheet" href="{{ asset('css/register.css') }}">
-  <script type="module" src="{{ asset('js/register.js') }}" defer></script>
 </head>
 
 <body>
@@ -29,12 +28,12 @@
         @csrf
         <div class="field input">
             <label for="username">Username</label>
-            <input type="text" name="username" id="username" required>
+            <input type="text" name="username" id="username" autocomplete="username" required>
         </div>
 
         <div class="field input">
             <label for="email">Email</label>
-            <input type="email" name="email" id="email" required>
+            <input type="email" name="email" id="email" autocomplete="email" required>
         </div>
 
             <div class="field input password-field">
@@ -48,7 +47,7 @@
               data-hide="{{ asset('images/hide.png') }}" >
 </div>
 
-        <button type="submit">SIGN UP</button>
+        <button id="submit">SIGN UP</button>
     </form>
     </div>
     <p class="signup">May Account na?
@@ -64,8 +63,7 @@
   </div>
   </div>
 
-
-  <script src="{{ asset('js/register.js') }}">
+   <script type="module" src="{{ asset('js/register.js') }}" defer></script>
 
 </body>
 

@@ -1,8 +1,8 @@
-import { getDatabase, ref, onValue, query, limitToLast, orderByChild, startAt, set, } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-database.js";
+import { getDatabase, ref, onValue, query, limitToLast, orderByChild, startAt, set, push} from "https://www.gstatic.com/firebasejs/12.5.0/firebase-database.js";
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
-import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
+import { getAuth, onAuthStateChanged, setPersistence, browserLocalPersistence } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-auth.js";
 
-//latest agriknows 2026-06-03
+//latest agriknows 2026-07-03
 
 const firebaseConfig = {
     apiKey: "AIzaSyCq4lH4tj4AS9-cqvM29um--Nu4v2UdvZw",
@@ -41,6 +41,69 @@ const database = getDatabase(app);
 const db = getDatabase(app);
 const dbPath = 'sensorData';
 
+// ==================== LOAD USER CROPS FOR MONITORING ====================
+async function loadUserCropsForMonitoring() {
+    console.log("📊 Loading user crops for monitoring...");
+    
+    // Check if user is logged in
+    if (!auth.currentUser) {
+        console.warn("⚠️ No user logged in");
+        return;
+    }
+    
+    const userId = auth.currentUser.uid;
+    
+    try {
+        // Load custom crops from Firebase
+        const userCropsRef = ref(db, `users/${userId}/customCrops`);
+        
+        onValue(userCropsRef, (snapshot) => {
+            if (snapshot.exists()) {
+                const customCrops = snapshot.val();
+                console.log("✅ Loaded custom crops:", Object.keys(customCrops).length);
+                
+                // Merge with predefined crops
+                allCropData = { ...PREDEFINED_CROP_DATA, ...customCrops };
+                
+                // Update the crop grid/selector if it exists
+                if (typeof renderCropOptions === 'function') {
+                    renderCropOptions();
+                }
+            } else {
+                console.log("ℹ️ No custom crops found for user");
+                // Just use predefined crops
+                allCropData = { ...PREDEFINED_CROP_DATA };
+            }
+        }, (error) => {
+            console.error("❌ Error loading user crops:", error);
+            // Fallback to predefined crops
+            allCropData = { ...PREDEFINED_CROP_DATA };
+        });
+        
+    } catch (error) {
+        console.error("❌ Error in loadUserCropsForMonitoring:", error);
+        // Fallback to predefined crops
+        allCropData = { ...PREDEFINED_CROP_DATA };
+    }
+}
+
+setPersistence(auth, browserLocalPersistence)
+    .then(() => {
+        console.log("✅ Persistence set to LOCAL");
+    })
+    .catch((error) => {
+        console.error("❌ Persistence error:", error);
+    });
+
+// Also add this to check auth state
+onAuthStateChanged(auth, (user) => {
+    if (user) {
+        console.log("✅ User is logged in:", user.uid);
+        console.log("Email:", user.email);
+    } else {
+        console.log("❌ No user logged in");
+    }
+});
 
 
 function preventBack() {
@@ -52,18 +115,19 @@ window.addEventListener('pagehide', (event) => {
 });
 
 // 2. The proper way to handle the "Back" button after logout
-window.onload = function() {
+window.onload = function () {
     if (typeof window.history.pushState === "function") {
         window.history.pushState("jt656", null, null);
-        window.onpopstate = function() {
+        window.onpopstate = function () {
             window.history.pushState('jt656', null, null);
             // Optional: Force a redirect to login if they try to go back
-            window.location.href = "/login"; 
+            window.location.href = "/login";
         };
     }
 };
 
 //-------------------------------------Global Variables let---------------------------
+
 let devices = [];
 let currentPumpStatus = 'off';
 let deviceIdCounter = 1;
@@ -73,6 +137,10 @@ let allCropData = {};
 let currentCropKey = null;
 let latestHistoryData = []; // Store data for graphs
 let chartInstances = {};    // Store Chart.js instances to manage updates
+// Global variables for data history
+let currentTimeRange = '1h';
+let isGraphMode = false;
+let autoRefreshInterval = null;
 
 // Crop data with optimal environmental conditions (Predefined part)
 const PREDEFINED_CROP_DATA = {
@@ -113,35 +181,305 @@ const PREDEFINED_CROP_DATA = {
     }
 };
 
-//user input crop selector
 
-function listenToSelectedCrop(cropId) {
-    const cropRef = ref(database, `Crop/${cropId}`);
 
-    onValue(cropRef, (snapshot) => {
-        if (!snapshot.exists()) return;
+//---------------------------user input crop selector-------------------------------------
+document.addEventListener("DOMContentLoaded", () => {
+    document.getElementById("saveBtn").addEventListener("click", saveData);
+});
 
-        const data = snapshot.val();
 
-        // Convert Firebase data to your existing structure
-        allCropData[cropId] = {
-            name: data.customCropName || "Custom Crop",
-            temperature: { min: data.tempMin, max: data.tempMax },
-            moisture: { min: data.moistureMin, max: data.moistureMax },
-            humidity: { min: data.humidityMin, max: data.humidityMax },
-            ph: { min: data.phMin, max: data.phMax }
-        };
+function saveData() {
+    const user = auth.currentUser;
+    
+    // ===== CRITICAL DEBUG =====
+    console.log("🔍 === SAVE CROP DEBUG ===");
+    console.log("Is user logged in?", user ? "YES ✅" : "NO ❌");
+    
+    if (user) {
+        console.log("User UID:", user.uid);
+        console.log("User Email:", user.email);
+        console.log("Database Path:", `users/${user.uid}/customCrops/`);
+    } else {
+        console.log("⚠️ NO USER LOGGED IN!");
+        alert("Please login first!");
+        return;
+    }
+    console.log("=========================");
+    // ===== END DEBUG =====
+    
+    if (!user) {
+        alert('Please login first.');
+        return;
+    }
+    
+    const cropName = document.getElementById('CropName').value.trim();
+    
+    if (!cropName) {
+        showPopup('Mangyaring maglagay ng pangalan ng pananim.');
+        return;
+    }
 
-        currentCropKey = cropId;
+    // Get all values
+    const tempMin = Number(document.getElementById('tempMin').value);
+    const tempMax = Number(document.getElementById('tempMax').value);
+    const moistureMin = Number(document.getElementById('moistureMin').value);
+    const moistureMax = Number(document.getElementById('moistureMax').value);
+    const phMin = Number(document.getElementById('phMin').value);
+    const phMax = Number(document.getElementById('phMax').value);
+    const humidityMin = Number(document.getElementById('humidityMin').value);
+    const humidityMax = Number(document.getElementById('humidityMax').value);
 
-        console.log("Crop ranges loaded from Firebase:", allCropData[cropId]);
+    // Validate ranges
+    if (tempMin >= tempMax) {
+        showPopup('Ang minimum temperatura ay dapat mas mababa sa maximum.');
+        return;
+    }
+    if (moistureMin >= moistureMax) {
+        showPopup('Ang minimum moisture ay dapat mas mababa sa maximum.');
+        return;
+    }
+    if (phMin >= phMax) {
+        showPopup('Ang minimum pH ay dapat mas mababa sa maximum.');
+        return;
+    }
+    if (humidityMin >= humidityMax) {
+        showPopup('Ang minimum humidity ay dapat mas mababa sa maximum.');
+        return;
+    }
+
+    // IMPORTANT: Save to users/{user.uid}/customCrops/{cropName}
+    // This ensures it's under the SAME UID as email/username
+    const cropRef = ref(db, `users/${user.uid}/customCrops/${cropName}`);
+
+    const cropData = {
+        name: cropName,
+        temp: { 
+            min: tempMin, 
+            max: tempMax 
+        },
+        moisture: { 
+            min: moistureMin, 
+            max: moistureMax 
+        },
+        ph: { 
+            min: phMin, 
+            max: phMax 
+        },
+        humidity: { 
+            min: humidityMin, 
+            max: humidityMax 
+        },
+        createdAt: new Date().toISOString()
+    };
+
+    set(cropRef, cropData)
+        .then(() => {
+            showPopup(`Tagumpay! Naka-save na ang ${cropName} sa iyong account.`);
+            document.getElementById('addCropForm').reset();
+            document.getElementById('addCropModal').style.display = 'none';
+        })
+        .catch((error) => {
+            console.error("Firebase Error:", error);
+            showPopup('Error saving: ' + error.message);
+        });
+}
+
+
+//-------------------------- MONITOR SENSORS AND COMPARE TO RANGES------------------------
+// Add this popup function
+
+// ==================== CROP SELECTION MODAL - EXACT DESIGN ====================
+
+// Function to open the modal
+function openCropSelectionModal() {
+    const modal = document.getElementById('cropSelectionModal');
+    modal.classList.add('active');
+    modal.style.display = 'flex';
+    loadCropsInModal();
+}
+
+// Function to close the modal
+function closeCropSelectionModal() {
+    const modal = document.getElementById('cropSelectionModal');
+    modal.classList.remove('active');
+    modal.style.display = 'none';
+}
+
+// Close modal when clicking on dark overlay
+document.addEventListener('DOMContentLoaded', function() {
+    const modal = document.getElementById('cropSelectionModal');
+    if (modal) {
+        modal.addEventListener('click', function(e) {
+            if (e.target === modal) {
+                closeCropSelectionModal();
+            }
+        });
+    }
+});
+
+// Function to load crops (predefined + custom from Firebase)
+function loadCropsInModal() {
+    const user = auth.currentUser;
+    
+    if (!user) {
+        console.log("No user logged in");
+        return;
+    }
+
+    console.log("Loading crops for selection...");
+
+    // Get the grid container
+    const grid = document.querySelector('#cropSelectionModal .crops-selection-grid');
+    
+    if (!grid) {
+        console.error("Crops grid not found!");
+        return;
+    }
+
+    // Reference to custom crops in Firebase
+    const cropsRef = ref(db, `users/${user.uid}/customCrops`);
+    
+    // Listen for custom crops
+    onValue(cropsRef, (snapshot) => {
+        const customCrops = snapshot.val();
+        
+        // Remove existing custom cards
+        const existingCustom = grid.querySelectorAll('.crop-selection-card[data-custom="true"]');
+        existingCustom.forEach(card => card.remove());
+        
+        if (!customCrops) {
+            console.log("No custom crops");
+            return;
+        }
+
+        console.log(`Found ${Object.keys(customCrops).length} custom crops`);
+
+        // Add each custom crop
+        Object.keys(customCrops).forEach(cropKey => {
+            const crop = customCrops[cropKey];
+            
+            const card = document.createElement('div');
+            card.className = 'crop-selection-card';
+            card.setAttribute('data-crop-key', cropKey);
+            card.setAttribute('data-custom', 'true');
+            
+            card.innerHTML = `
+                <div class="crop-selection-icon">
+                    <svg viewBox="0 0 24 24" fill="currentColor" width="48" height="48">
+                        <path d="M17 8C8 10 5.9 16.17 3.82 21.34l1.89.66.71-2.33c1.06.15 2.15.23 3.24.23 7.78 0 14-5.37 14-12 0-1.1-.9-2-2-2h-4.18C17.5 5.94 17 6.94 17 8z"/>
+                    </svg>
+                </div>
+                <div class="crop-selection-name">${crop.name}</div>
+            `;
+            
+            card.addEventListener('click', function() {
+                selectCrop(this, cropKey, crop);
+            });
+            
+            grid.appendChild(card);
+        });
+        
+        console.log(`✅ Loaded custom crops`);
     });
 }
 
-function selectCropFromFirebase(cropId) {
-    listenToSelectedCrop(cropId);
-    localStorage.setItem("selectedCropId", cropId);
+// Function to select a crop
+function selectCrop(cardElement, cropKey, cropData) {
+    // Remove selected from all
+    const allCards = document.querySelectorAll('#cropSelectionModal .crop-selection-card');
+    allCards.forEach(card => card.classList.remove('selected'));
+    
+    // Add selected to clicked card
+    cardElement.classList.add('selected');
+    
+    // Store crop data
+    if (cropData) {
+        // Custom crop
+        window.selectedCropData = {
+            name: cropData.name,
+            temperature: cropData.temp,
+            moisture: cropData.moisture,
+            ph: cropData.ph,
+            humidity: cropData.humidity,
+            isCustom: true,
+            cropKey: cropKey
+        };
+    } else {
+        // Predefined crop
+        const predefinedCrop = cardElement.getAttribute('data-crop');
+        if (PREDEFINED_CROP_DATA && PREDEFINED_CROP_DATA[predefinedCrop]) {
+            window.selectedCropData = {
+                name: PREDEFINED_CROP_DATA[predefinedCrop].name,
+                temperature: PREDEFINED_CROP_DATA[predefinedCrop].temperature,
+                moisture: PREDEFINED_CROP_DATA[predefinedCrop].moisture,
+                ph: PREDEFINED_CROP_DATA[predefinedCrop].ph,
+                humidity: PREDEFINED_CROP_DATA[predefinedCrop].humidity,
+                isCustom: false,
+                cropKey: predefinedCrop
+            };
+        }
+    }
+    
+    console.log("Selected:", window.selectedCropData);
 }
+
+// Add click handlers to predefined crops
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(() => {
+        const predefinedCards = document.querySelectorAll('#cropSelectionModal .crop-selection-card[data-crop]');
+        
+        predefinedCards.forEach(card => {
+            card.addEventListener('click', function() {
+                selectCrop(this, null, null);
+            });
+        });
+    }, 300);
+});
+
+// Handle confirm button
+document.addEventListener('DOMContentLoaded', function() {
+    const confirmBtn = document.getElementById('confirmCropSelectionBtn');
+    
+    if (confirmBtn) {
+        confirmBtn.addEventListener('click', function() {
+            if (!window.selectedCropData) {
+                showPopup("Pumili muna ng pananim!");
+                return;
+            }
+            
+            console.log("Confirmed:", window.selectedCropData.name);
+            
+            // Save as active crop
+            const user = auth.currentUser;
+            if (user) {
+                set(ref(db, `users/${user.uid}/activeCrop`), {
+                    name: window.selectedCropData.name,
+                    temperature: window.selectedCropData.temperature,
+                    moisture: window.selectedCropData.moisture,
+                    ph: window.selectedCropData.ph,
+                    humidity: window.selectedCropData.humidity,
+                    isCustom: window.selectedCropData.isCustom,
+                    updatedAt: new Date().toISOString()
+                }).then(() => {
+                    console.log("✅ Active crop saved");
+                    showPopup(`Napili: ${window.selectedCropData.name}`);
+                    closeCropSelectionModal();
+                    
+                    // Update monitoring (if you have this function)
+                    if (typeof updateCropMonitoring === 'function') {
+                        updateCropMonitoring(window.selectedCropData);
+                    }
+                });
+            }
+        });
+    }
+});
+
+// Make functions global
+window.openCropSelectionModal = openCropSelectionModal;
+window.closeCropSelectionModal = closeCropSelectionModal;
+
 
 //------------------------------------------------------------------------------------
 document.addEventListener('DOMContentLoaded', function () {
@@ -170,12 +508,16 @@ onAuthStateChanged(auth, (user) => {
  * @param {Object} sensorData - The full object of sensor readings from Firebase.
  */
 function updateCurrentReadings(sensorData) {
-    if (!sensorData) {
-        console.log("No data available to update current readings.");
+    if (!sensorData) return;
+
+    const currentTime = Date.now();
+    const dataTime = sensorData.timestamp;
+    if (currentTime - dataTime > 300000) { // 5 minutes
+        showOfflineState();
         return;
     }
 
-    // --- 1. Get Data Values ---
+    // --- Get Data Values ---
     // Handle cases where keys might be lowercase or capitalized based on your previous file usage
     const temp = (sensorData.temperature > 0) ? sensorData.temperature : "--";
     const moisture = (sensorData.moisture > 0 || sensorData.soilMoisture > 0) ? (sensorData.moisture || sensorData.soilMoisture) : "--";
@@ -189,7 +531,7 @@ function updateCurrentReadings(sensorData) {
     document.getElementById('current-humidity').textContent = humidity === "--" ? "-- %" : `${humidity}%`;
     document.getElementById('current-ph-level').textContent = ph === "--" ? "-- pH" : `${ph} pH`;
 
-    // --- 3. Update Text Status (The Logic) ---
+    // --- Update Text Status (The Logic) ---
     // We get the settings for the currently selected crop
     const currentCrop = allCropData[currentCropKey];
 
@@ -200,7 +542,7 @@ function updateCurrentReadings(sensorData) {
         updateStatusElement('status-humidity-text', humidity, currentCrop.humidity.min, currentCrop.humidity.max, "%");
         // pH Status
         updateStatusElement('status-ph-text', ph, currentCrop.ph.min, currentCrop.ph.max, "pH");
-        // Moisture Status (Reusing your specific logic or generic logic)
+        // Moisture Status 
         updateStatusElement('status-moisture-text', moisture, currentCrop.moisture.min, currentCrop.moisture.max, "%");
     } else {
         // If no crop selected, just show "No Crop Selected"
@@ -209,7 +551,7 @@ function updateCurrentReadings(sensorData) {
             el.className = "status-message status-warning";
         });
     }
-    // --- 4. Light Status Update ---
+    // --- Light Status Update ---
     // Assuming 1 = Bright/Light, 0 = Dark
     const lightText = (light == 1 || light === 'Light') ? "Maliwanag" : "Madilim";
     const lightClass = (light == 1 || light === 'Light') ? "status-good" : "status-warning";
@@ -272,14 +614,211 @@ function updateStatusElement(elementId, value, min, max, unit) {
 }
 
 //-------------------------------------Initialize Dashboard-----------------------------
+function loadAllCropData() {
+    const customCropsJson = localStorage.getItem('customCrops');
+    const customCrops = customCropsJson ? JSON.parse(customCropsJson) : {};
+    allCropData = { ...PREDEFINED_CROP_DATA, ...customCrops };
+    
+    const lastSelectedCropKey = localStorage.getItem('selectedCropKey');
+    if (lastSelectedCropKey && allCropData[lastSelectedCropKey]) {
+        setCrop(lastSelectedCropKey, allCropData[lastSelectedCropKey]);
+    } else {
+        setCrop('none', {
+            name: "Walang napiling pananim",
+            temperature: { min: 0, max: 0 },
+            moisture: { min: 0, max: 0 },
+            ph: { min: 0, max: 0 },
+            humidity: { min: 0, max: 0 },
+        });
+    }
+}
+function setCrop(cropKey, cropInfo) {
+    currentCropKey = cropKey;
+    localStorage.setItem('selectedCropKey', cropKey);
+    
+    const cropNameEl = document.getElementById('currentCropName');
+    const cropOptimalEl = document.getElementById('currentCropOptimal');
+    
+    if (cropNameEl) {
+        cropNameEl.innerHTML = `<i class="fas fa-seedling"></i> ${cropInfo.name}`;
+    }
+    
+    if (cropOptimalEl) {
+        cropOptimalEl.textContent = cropInfo.name === "Walang napiling pananim" 
+            ? "Pumili ng crop para bantayan"
+            : `Optimal: Temp ${cropInfo.temperature.min}-${cropInfo.temperature.max}°C, Moisture ${cropInfo.moisture.min}-${cropInfo.moisture.max}%, pH ${cropInfo.ph.min}-${cropInfo.ph.max}`;
+    }
+    
+    const tempOptimal = document.getElementById('tempOptimal');
+    const moistureOptimal = document.getElementById('moistureOptimal');
+    const phOptimal = document.getElementById('phOptimal');
+    const humidityOptimal = document.getElementById('humidityOptimal');
+    
+    if (tempOptimal) tempOptimal.textContent = `Optimal: ${cropInfo.temperature.min}-${cropInfo.temperature.max}°C`;
+    if (moistureOptimal) moistureOptimal.textContent = `Optimal: ${cropInfo.moisture.min}-${cropInfo.moisture.max}%`;
+    if (phOptimal) phOptimal.textContent = `Optimal: ${cropInfo.ph.min}-${cropInfo.ph.max}`;
+    if (humidityOptimal) humidityOptimal.textContent = `Optimal: ${cropInfo.humidity.min}-${cropInfo.humidity.max}%`;
+}
+function initializeEventListeners() {
+    console.log("✅ Initializing event listeners...");
+    initializeModals();
+}function updateCurrentDate() {
+    const now = new Date();
+    const options = {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+    };
+    const dateElement = document.getElementById('current-date');
+    if (dateElement) {
+        dateElement.textContent = now.toLocaleDateString('en-US', options);
+    }
+}
+
+function updateLightStatus(status) {
+    const lightValueElement = document.getElementById('light-status');
+    if (!lightValueElement) return;
+
+    if (status === "--" || status === null || status === undefined) {
+        lightValueElement.textContent = '--';
+    } else if (status === 1 || status === 'Light' || status === 'Maliwanag') {
+        lightValueElement.textContent = 'Light';
+    } else {
+        lightValueElement.textContent = 'Dark';
+    }
+}
+
+function updateSoilMoistureStatus(moistureLevel) {
+    const statusElement = document.getElementById('soil-moisture-status');
+    if (!statusElement) return;
+    
+    let status, message, className;
+
+    if (moistureLevel < 20) {
+        status = 'Sobrang tuyo';
+        message = 'Kailangan agad ng Patubig';
+        className = 'status-dry';
+    } else if (moistureLevel < 40) {
+        status = 'Tuyot';
+        message = 'Kailangan ng Patubig';
+        className = 'status-moderate';
+    } else if (moistureLevel < 60) {
+        status = 'Mainam';
+        message = 'Perpektong kondition ng pag kabasa ng lupa';
+        className = 'status-optimal';
+    } else if (moistureLevel < 80) {
+        status = 'Basa';
+        message = 'Sapat na kahalumigmigan';
+        className = 'status-wet';
+    } else {
+        status = 'Sobra sa tubig';
+        message = 'Bawasan ang Tubig';
+        className = 'status-saturated';
+    }
+
+    statusElement.textContent = `${status}: ${message}`;
+    statusElement.className = `status-message ${className}`;
+}
+
+function initializePumpControls() {
+    const pumpSwitch = document.getElementById('pump-switch');
+    
+    if (!pumpSwitch) {
+        console.warn("⚠️ Pump switch element not found");
+        return;
+    }
+    
+    // Get saved status from localStorage
+    const savedStatus = localStorage.getItem('pumpStatus');
+    const initialStatus = savedStatus === 'on' ? 'on' : 'off';
+    
+    // Set initial state
+    setPumpStatus(initialStatus);
+    
+    // Add change listener
+    pumpSwitch.addEventListener('change', function () {
+        const newStatus = this.checked ? 'on' : 'off';
+        setPumpStatus(newStatus);
+    });
+    
+    console.log("✅ Pump controls initialized:", initialStatus);
+}
+
+function setPumpStatus(status) {
+    const pumpSwitch = document.getElementById('pump-switch');
+    
+    if (!pumpSwitch) return;
+    
+    // Save to localStorage
+    localStorage.setItem('pumpStatus', status);
+    
+    // Update switch state
+    pumpSwitch.checked = (status === 'on');
+    
+    // Show notification if user triggered it
+    if (document.activeElement === pumpSwitch) {
+        const message = status === 'on' ? ' Patubig: ON' : ' Patubig: OFF';
+        showPumpNotification(message, status);
+    }
+}
+
+function showPumpNotification(message, type) {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.innerHTML = `
+        <i class="fas fa-${type === 'on' ? 'check-circle' : 'times-circle'}"></i>
+        ${message}
+    `;
+    notification.style.cssText = `
+        position: fixed;
+        top: 80px;
+        right: 20px;
+        padding: 12px 20px;
+        background: ${type === 'on' ? '#27ae60' : '#e74c3c'};
+        color: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        z-index: 1001;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        animation: slideIn 0.3s ease;
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Remove after 3 seconds
+    setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => notification.remove(), 300);
+    }, 3000);
+}
 function initDashboard() {
     updateCurrentDate();
     loadAllCropData(); // **MODIFIED**: Load crop data (including custom) from storage
     initializeEventListeners();
     updateSoilMoistureStatus(42);
-    updateLightStatus(1); // Set initial status to Light (1)
+    updateLightStatus("--");
     initializePumpControls(); // **MODIFIED**: Initializes pump state from storage
     listenToFirebaseData();
+
+     setTimeout(() => {
+        initializeDataHistory();
+    }, 500);
+}
+// ==================== ENHANCED  ====================
+function initializeDataHistory() {
+    initializeTimeFilters();
+    initializeGraphMode();
+    initializeExportButton();
+    initializeAutoRefresh();
+     loadHistoryData('1h');
+    
+    // Load initial data
+    loadHistoryData(currentTimeRange);
 }
 //--------------------------------Firebase Data------------------------------------------
 function listenToFirebaseData() {
@@ -288,7 +827,7 @@ function listenToFirebaseData() {
 
     onValue(readingsQuery, (snapshot) => {
         console.log("Firebase Data Received:", snapshot.val());
-        
+
         if (snapshot.exists()) {
             let historyDataArray = [];
 
@@ -314,20 +853,20 @@ function listenToFirebaseData() {
             // 5. HEARTBEAT LOGIC (Real-time Status)
             const latestReading = historyDataArray[historyDataArray.length - 1];
             const currentTime = Date.now();
-            
+
             // Handle both numeric timestamps and string formats
-            const dataTime = typeof latestReading.timestamp === 'number' 
-                             ? latestReading.timestamp 
-                             : new Date(latestReading.timestamp).getTime();
-            
+            const dataTime = typeof latestReading.timestamp === 'number'
+                ? latestReading.timestamp
+                : new Date(latestReading.timestamp).getTime();
+
             const fiveMinutes = 5 * 60 * 1000;
 
             if (currentTime - dataTime > fiveMinutes) {
-                // Device hasn't sent data in 5 minutes
                 showOfflineState();
             } else {
                 // Device is active, update the UI cards
-                updateCurrentReadings(latestReading);
+                updateCurrentReadings(latestReading); // This is your old function
+                updateCurrentStatusCards(latestReading); // Add this line to call your NEW function
             }
         } else {
             showOfflineState();
@@ -339,52 +878,36 @@ function listenToFirebaseData() {
 
 // Function to reset display when hardware is disconnected
 function showOfflineState() {
-    const ids = ['current-temperature', 'current-soil-moisture', 'current-humidity', 'current-ph-level'];
+    // 1. Clear the big numbers/values
+    const ids = ['current-temperature', 'current-soil-moisture', 'current-humidity', 'current-ph-level', 'light-status'];
     ids.forEach(id => {
         const el = document.getElementById(id);
         if (el) el.textContent = "--";
     });
 
-    // Update status text indicators
-    document.querySelectorAll('.status-message').forEach(el => {
-        el.textContent = "Offline";
-        el.style.color = "#e74c3c"; // Red
+    // 2. Clear the "Kasalukuyang Status" labels (Mainam, Mababa, etc.)
+    // This targets the specific status IDs in your welcome.blade.php
+    const statusIds = [
+        'status-temp-text',      
+        'status-moisture-text',  
+        'status-humidity-text',
+        'status-ph-text',
+        'status-light-text'
+    ];
+
+    statusIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.textContent = "Offline";
+            el.style.color = "#e74c3c"; // Change text to Red
+        }
     });
+
+    // 3. Clear the side-panel moisture status if it exists
+    const sideStatus = document.getElementById('soil-moisture-status');
+    if (sideStatus) sideStatus.textContent = "Offline";
 }
-// Use the existing 'db' instance
-// The listener that runs every time data changes
-//DONT ERASE THIS MUNA
-//const readingsRef = query(ref(db, 'sensorData'), limitToLast(20));
-/*onValue(readingsRef, (snapshot) => {
-    let historyDataArray = [];
-    // ... rest of your snapshot.forEach and data processing ...
 
-    snapshot.forEach((childSnapshot) => {
-        const data = childSnapshot.val();
-        data.id = childSnapshot.key;
-        historyDataArray.push(data);
-    });
-
-    historyDataArray.reverse();
-    // ** NEW LINE: Save data to global variable for the graphs **
-    latestHistoryData = historyDataArray;
-
-    if (historyDataArray.length > 0) {
-        const latestReading = historyDataArray[0];
-        updateCurrentReadings(latestReading);
-        //updateSoilMoistureStatus(latestReading.soilMoisture); 
-    }
-    updateHistoryTable(historyDataArray);
-
-    // ** NEW BLOCK: Update graphs if they are visible **
-    const graphContainer = document.getElementById('history-graph');
-    if (graphContainer && !graphContainer.classList.contains('hidden')) {
-        updateAllCharts();
-    }
-
-}, (error) => {
-    console.error("Firebase History Data Listener Error: ", error);
-});*/
 
 //-------------------------------History Table Time-------------------------------
 /**
@@ -396,15 +919,14 @@ function formatTimestamp(timestamp) {
     if (!timestamp) return '';
     const date = new Date(timestamp);
 
-    // Use Intl.DateTimeFormat for a compact and precise output (Date and Time)
+    // Format: Nov 28, 2025 11:26 AM
     const formatter = new Intl.DateTimeFormat('en-US', {
         year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
+        month: 'short',  // Nov, Dec, etc.
+        day: 'numeric',
+        hour: 'numeric',
         minute: '2-digit',
-        second: '2-digit',
-        hour12: true // Ensures AM/PM display
+        hour12: true
     });
 
     return formatter.format(date);
@@ -440,9 +962,8 @@ function updateHistoryTable(dataArray) {
         `;
         tableBody.appendChild(row);
     });
+
 }
-
-
 // --- NEW: Function to update the top cards with the latest reading ---
 function updateCurrentStatusCards(latestData) {
     document.querySelector('.reading-card .temperature + .value').textContent = `${latestData.temperature || 'N/A'} °C`;
@@ -456,95 +977,6 @@ function updateCurrentStatusCards(latestData) {
     // Update Light Status (Assuming 1 is Light, 0 is Dark)
     const lightVal = latestData.light === 1 || latestData.light === 'Light' ? 1 : 0;
     updateLightStatus(lightVal);
-}
-
-function updateLightStatus(status) {
-    const lightValueElement = document.getElementById('light-status');
-    const lightOptimalElement = document.getElementById('lightOptimal');
-
-    // **CRITICAL FIX**: Check if the elements exist before attempting to set properties
-    if (!lightValueElement) {
-        console.warn("Element 'light-status' not found for light status update.");
-        return; // Exit if the main element isn't there
-    }
-
-    if (status === 0) {
-        lightValueElement.textContent = 'Dark';
-    } else {
-        lightValueElement.textContent = 'Light';
-    }
-
-    // Clear the optimal text since it's no longer needed
-    if (lightOptimalElement) { // <-- This check prevents the error on line 294
-        lightOptimalElement.textContent = ' ';
-    }
-}
-function updateCurrentDate() {
-    const now = new Date();
-    const options = {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-    };
-    document.getElementById('current-date').textContent =
-        now.toLocaleDateString('en-US', options);
-}
-// **NEW FUNCTION** to load custom crops from localStorage
-function loadAllCropData() {
-    const customCropsJson = localStorage.getItem('customCrops');
-    const customCrops = customCropsJson ? JSON.parse(customCropsJson) : {};
-
-    // Merge predefined crops and custom crops
-    allCropData = { ...PREDEFINED_CROP_DATA, ...customCrops };
-
-    // Check if a crop was previously selected and is still valid
-    const lastSelectedCropKey = localStorage.getItem('selectedCropKey');
-    if (lastSelectedCropKey && allCropData[lastSelectedCropKey]) {
-        setCrop(lastSelectedCropKey, allCropData[lastSelectedCropKey]);
-    } else {
-        // Fallback or initial state
-        setCrop('none', {
-            name: "No crop selected",
-            temperature: { min: 0, max: 0 },
-            moisture: { min: 0, max: 0 },
-            ph: { min: 0, max: 0 },
-            humidity: { min: 0, max: 0 },
-        });
-    }
-}
-// **NEW FUNCTION** to save custom crops to localStorage
-function saveCustomCrops(customCrops) {
-    localStorage.setItem('customCrops', JSON.stringify(customCrops));
-
-    // Re-merge data to update the in-memory cache
-    allCropData = { ...PREDEFINED_CROP_DATA, ...customCrops };
-}
-// **MODIFIED**: Set crop and update optimal ranges
-function setCrop(cropKey, cropInfo) {
-    currentCropKey = cropKey;
-    localStorage.setItem('selectedCropKey', cropKey); // Save the selected crop key for persistence
-    // Update crop display
-    document.getElementById('currentCropName').textContent = cropInfo.name;
-    document.getElementById('currentCropOptimal').textContent =
-        `Optimal: Temp ${cropInfo.temperature.min}-${cropInfo.temperature.max}°C, ` +
-        `Moisture ${cropInfo.moisture.min}-${cropInfo.moisture.max}%, ` +
-        `pH ${cropInfo.ph.min}-${cropInfo.ph.max}`;
-    // Update optimal ranges in cards
-    document.getElementById('tempOptimal').textContent =
-        `${cropInfo.temperature.min}-${cropInfo.temperature.max}°C`;
-    document.getElementById('moistureOptimal').textContent =
-        `${cropInfo.moisture.min}-${cropInfo.moisture.max}%`;
-    document.getElementById('phOptimal').textContent =
-        `${cropInfo.ph.min}-${cropInfo.ph.max}`;
-    document.getElementById('humidityOptimal').textContent =
-        `${cropInfo.humidity.min}-${cropInfo.humidity.max}%`;
-}
-function initializeEventListeners() {
-    initializeModals();
-    initializeTimeFilters();
-    initializeGraphMode();
-    initializeExportButton();
 }
 
 // Modal handling
@@ -577,6 +1009,7 @@ function initializeModals() {
             addCropModal.style.display = 'flex';
         });
     }
+
 
     // ---  Close Modals (with 'x' buttons) ---
     closeButtons.forEach(button => {
@@ -633,19 +1066,6 @@ function initializeModals() {
             isCustom: true // Mark as custom
         };
 
-        // **NEW LOGIC**: Generate a unique key and save the custom crop
-        const customKey = 'custom_' + Date.now();
-
-        const customCropsJson = localStorage.getItem('customCrops');
-        let customCrops = customCropsJson ? JSON.parse(customCropsJson) : {};
-        customCrops[customKey] = customCrop;
-
-        // Set the new custom crop as the selected one
-        setCrop(customKey, customCrop);
-
-        alert(`Custom crop "${cropName}" added and selected!`);
-        document.getElementById('addCropForm').reset();
-        addCropModal.style.display = 'none'; // Hide modal
     });
 
     // --- **NEW** Edit Crop Form Submission ---
@@ -671,47 +1091,6 @@ function initializeModals() {
             humidity: { min: humidityMin, max: humidityMax },
             isCustom: true
         };
-
-        const customCropsJson = localStorage.getItem('customCrops');
-        let customCrops = customCropsJson ? JSON.parse(customCropsJson) : {};
-        customCrops[cropKey] = updatedCrop;
-
-        if (currentCropKey === cropKey) {
-            setCrop(cropKey, updatedCrop); // Re-set the crop to update the main UI
-        }
-
-        alert(`Crop "${cropName}" updated successfully!`);
-        editDeleteCropModal.style.display = 'none';
-        renderCropOptions(); // Re-render the select crop modal
-    });
-
-    // --- **NEW** Delete Crop Button Handler ---
-    deleteCropBtn.addEventListener('click', () => {
-        const cropKey = document.getElementById('editCropKey').value;
-        const cropName = document.getElementById('editCustomCropName').value;
-
-        if (confirm(`Are you sure you want to delete the custom crop "${cropName}"? This action cannot be undone.`)) {
-            const customCropsJson = localStorage.getItem('customCrops');
-            let customCrops = customCropsJson ? JSON.parse(customCropsJson) : {};
-
-            delete customCrops[cropKey]; // Delete from the custom crops object
-
-            // If the deleted crop was currently selected, reset the selection
-            if (currentCropKey === cropKey) {
-                // Fallback to initial state
-                setCrop('none', {
-                    name: "No crop selected",
-                    temperature: { min: 0, max: 0 },
-                    moisture: { min: 0, max: 0 },
-                    ph: { min: 0, max: 0 },
-                    humidity: { min: 0, max: 0 },
-                });
-            }
-
-            alert(`Crop "${cropName}" deleted successfully.`);
-            editDeleteCropModal.style.display = 'none';
-            renderCropOptions(); // Re-render the select crop modal
-        }
     });
 }
 
@@ -807,14 +1186,241 @@ function openEditDeleteModal(cropKey) {
 //-------------------------------History Table Time Buttons-------------------------------
 function initializeTimeFilters() {
     const timeFilters = document.querySelectorAll('.time-filter');
+    
     timeFilters.forEach(filter => {
         filter.addEventListener('click', () => {
+            // Remove active class from all filters
             timeFilters.forEach(f => f.classList.remove('active'));
+            
+            // Add active class to clicked filter
             filter.classList.add('active');
-            const timeRange = filter.getAttribute('data-time');
-            // loadHistoryData(timeRange);
+            
+            // Get time range
+            currentTimeRange = filter.getAttribute('data-time');
+            
+            // Show loading state
+            showLoadingState();
+            
+            // Load data for selected time range
+            loadHistoryData(currentTimeRange);
         });
     });
+}
+// ==================== LOADING STATE MANAGEMENT FOR HISTORY TABLE ====================
+function showLoadingState() {
+    const historyTable = document.getElementById('history-table');
+    const table = historyTable.querySelector('table');
+    const loadingDiv = historyTable.querySelector('.history-loading');
+    
+    if (table) table.style.display = 'none';
+    if (loadingDiv) {
+        loadingDiv.style.display = 'block';
+    } else {
+        historyTable.innerHTML = `
+            <div class="history-loading">
+                <i class="fas fa-spinner"></i>
+                <p>Naglo-load ng data...</p>
+            </div>
+        `;
+    }
+}
+
+function hideLoadingState() {
+    const historyTable = document.getElementById('history-table');
+    const table = historyTable.querySelector('table');
+    const loadingDiv = historyTable.querySelector('.history-loading');
+    
+    if (loadingDiv) loadingDiv.style.display = 'none';
+    if (table) table.style.display = 'table';
+}
+
+function showEmptyState(range) {
+    const historyTable = document.getElementById('history-table');
+    const loadingDiv = historyTable.querySelector('.history-loading');
+    
+    if (loadingDiv) loadingDiv.style.display = 'none';
+    
+    // Dynamic message based on time range
+    let timeMessage = '';
+    switch(range) {
+        case '1h':
+            timeMessage = 'sa nakaraang 1 oras';
+            break;
+        case '6h':
+            timeMessage = 'sa nakaraang 6 oras';
+            break;
+        case '24h':
+            timeMessage = 'sa nakaraang 24 oras';
+            break;
+        case '7d':
+            timeMessage = 'sa nakaraang 7 araw';
+            break;
+        case 'all':
+            timeMessage = 'sa nakaraang buwan';
+            break;
+        default:
+            timeMessage = 'sa napiling oras';
+    }
+    
+    historyTable.innerHTML = `
+        <div class="history-empty">
+            <i class="fas fa-database"></i>
+            <h3>Walang Nakuhang Data</h3>
+            <p>Walang natagpuang sensor readings ${timeMessage}.</p>
+        </div>
+    `;
+}
+// ==================== ENHANCED DATA LOADING ====================
+async function loadHistoryData(range) {
+    const now = Date.now();
+    let startTime;
+    let limitCount = 100;
+    
+    if (range === 'all') {
+    startTime = now - (30 * 24 * 60 * 60 * 1000);
+    limitCount = 500;
+    } else 
+    switch (range) {
+        case '1h':
+            startTime = now - (60 * 60 * 1000);
+            break;
+        case '6h':
+            startTime = now - (6 * 60 * 60 * 1000);
+            break;
+        case '24h':
+            startTime = now - (24 * 60 * 60 * 1000);
+            break;
+        case '7d':
+            startTime = now - (7 * 24 * 60 * 60 * 1000);
+             limitCount = 200;
+            break;
+        default:
+            startTime = now - (60 * 60 * 1000);
+    }
+    
+    const historyQuery = query(
+        ref(db, dbPath),
+        orderByChild('timestamp'),
+        startAt(startTime),
+        limitToLast(limitCount) // Use the dynamic limit
+    );
+    
+    try {
+        onValue(historyQuery, (snapshot) => {
+            let dataArray = [];
+            snapshot.forEach((childSnapshot) => {
+                dataArray.push({
+                    id: childSnapshot.key,
+                    ...childSnapshot.val()
+                });
+            });
+            
+            // Sort by timestamp descending (newest first)
+            dataArray.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            
+            // Store for graph use
+            latestHistoryData = dataArray;
+            
+            if (dataArray.length === 0) {
+                showEmptyState(range);
+            } else {
+                hideLoadingState();
+                populateHistoryTable(dataArray);
+                
+                // Update graphs if in graph mode
+                if (isGraphMode) {
+                    updateAllCharts();
+                }
+            }
+        }, { onlyOnce: true });
+    } catch (error) {
+        console.error("Error loading history data:", error);
+        showEmptyState(range);
+    }
+}
+// ==================== IMPROVED TABLE POPULATION ====================
+function populateHistoryTable(dataArray) {
+    const tbody = document.getElementById('history-data');
+    const table = document.querySelector('#history-table table');
+    
+    if (!tbody || !table) return;
+    
+    // Clear existing rows
+    tbody.innerHTML = '';
+    
+    // Helper function to get color class for values
+    function getColorClass(value, type) {
+        if (!value || value === '--' || value === 'Offline') return '';
+        
+        const numValue = parseFloat(value);
+        if (isNaN(numValue)) return '';
+        
+        switch(type) {
+            case 'temperature':
+                // Blue (Below): < 22°C, Green (Normal): 22°C - 28°C, Red (Above): > 28°C
+                if (numValue < 22) return 'value-cold';
+                if (numValue >= 22 && numValue <= 28) return 'value-normal';
+                if (numValue > 28) return 'value-hot';
+                break;
+                
+            case 'moisture':
+                // Blue (Below): < 50%, Green (Normal): 50% - 80%, Red (Above): > 80%
+                if (numValue < 50) return 'value-low';
+                if (numValue >= 50 && numValue <= 80) return 'value-normal';
+                if (numValue > 80) return 'value-high';
+                break;
+                
+            case 'humidity':
+                // Blue (Below): < 50%, Green (Normal): 50% - 80%, Red (Above): > 80%
+                if (numValue < 50) return 'value-low';
+                if (numValue >= 50 && numValue <= 80) return 'value-normal';
+                if (numValue > 80) return 'value-high';
+                break;
+                
+            case 'ph':
+                // Orange (Below): < 5.5, Green (Normal): 5.5 - 6.5, Blue (Above): > 6.5
+                if (numValue < 5.5) return 'value-acidic';
+                if (numValue >= 5.5 && numValue <= 6.5) return 'value-normal';
+                if (numValue > 6.5) return 'value-alkaline';
+                break;
+        }
+        return '';
+    }
+    
+    // Helper function to format value or show "Offline"
+    function formatValue(value, unit = '') {
+        if (!value || value === '--' || value === null || value === undefined) {
+            return '<span class="offline-status">Offline</span>';
+        }
+        return value + unit;
+    }
+    
+    // Populate with new data
+    dataArray.forEach(row => {
+        const tr = document.createElement('tr');
+        
+        const formattedTime = formatTimestamp(row.timestamp || row.id);
+        
+        const moistureValue = row.soilMoisture || row.moisture;
+        const humidityValue = row.humidity;
+        const temperatureValue = row.temperature;
+        const phValue = row.phLevel || row.pH;
+        const lightValue = row.lightStatus || row.light;
+        
+        tr.innerHTML = `
+            <td>${formattedTime}</td>
+            <td class="${getColorClass(moistureValue, 'moisture')}">${formatValue(moistureValue, '%')}</td>
+            <td class="${getColorClass(humidityValue, 'humidity')}">${formatValue(humidityValue, '%')}</td>
+            <td class="${getColorClass(temperatureValue, 'temperature')}">${formatValue(temperatureValue, '°C')}</td>
+            <td>${lightValue || '<span class="offline-status">Offline</span>'}</td>
+            <td class="${getColorClass(phValue, 'ph')}">${formatValue(phValue, '')}</td>
+        `;
+        
+        tbody.appendChild(tr);
+    });
+    
+    // Show the table
+    table.style.display = 'table';
 }
 //-------------------------------Export Data Functionality-------------------------------
 function initializeExportListeners() {
@@ -849,126 +1455,188 @@ function initializeGraphMode() {
     const toggleBtn = document.getElementById('graph-mode-toggle');
     const tableView = document.getElementById('history-table');
     const graphView = document.getElementById('history-graph');
-
+    
+    console.log("🎨 Initializing Graph Mode...");
+    console.log("  Toggle button:", toggleBtn ? "✅ Found" : "❌ Not found");
+    console.log("  Table view:", tableView ? "✅ Found" : "❌ Not found");
+    console.log("  Graph view:", graphView ? "✅ Found" : "❌ Not found");
+    
+    if (!toggleBtn) {
+        console.error("❌ Graph toggle button not found!");
+        return;
+    }
+    
     toggleBtn.addEventListener('click', () => {
-        if (tableView.classList.contains('hidden')) {
-            // Show Table
-            tableView.classList.remove('hidden');
-            graphView.classList.add('hidden');
-            toggleBtn.innerHTML = '<i class="fas fa-chart-bar"></i> Graph Mode';
-        } else {
-            // Show Graph
-            tableView.classList.add('hidden');
-            graphView.classList.remove('hidden');
-            toggleBtn.innerHTML = '<i class="fas fa-table"></i> Table Mode';
+        console.log("🖱️ Graph mode button clicked!");
+        console.log("  Current isGraphMode:", isGraphMode);
+        
+        isGraphMode = !isGraphMode;
+        console.log("  New isGraphMode:", isGraphMode);
+        
+       if (isGraphMode) {
+    console.log("📊 Switching to GRAPH mode...");
+       
+    // Hide table
+    if (tableView) {
+        tableView.classList.add('hidden');
+        tableView.style.display = 'none';
+        console.log("  ✅ Table hidden");
+    }
+    
+    // Show graph
+    if (graphView) {
+        graphView.classList.remove('hidden');
+        graphView.style.display = 'grid';  // Force grid display
+        
+        // Force browser reflow
+        void graphView.offsetHeight;
+        
+        console.log("  ✅ Graph shown");
+        console.log("  📏 Graph dimensions:", graphView.offsetWidth, "x", graphView.offsetHeight);
+    }
 
-            // ** Load the charts with real data **
-            updateAllCharts();
-        }
-    });
-}
+    toggleBtn.innerHTML = '<i class="fas fa-table"></i> Table Mode';
+    
+    // Update charts with delay
+    console.log("  📊 Creating bar charts...");
+    console.log("  Data available:", latestHistoryData ? latestHistoryData.length : 0, "entries");
+    
+    setTimeout(() => {
+        // Force all canvases to be visible
+        const canvases = graphView.querySelectorAll('canvas');
+        canvases.forEach(canvas => {
+            canvas.style.display = 'block';
+            canvas.style.visibility = 'visible';
+        });
+        
+        // Force browser reflow again
+        void graphView.offsetHeight;
+        
+        // Destroy old charts first
+        Object.keys(chartInstances).forEach(key => {
+            if (chartInstances[key]) {
+                chartInstances[key].destroy();
+                delete chartInstances[key];
+            }
+        });
+        
+        // Create new bar charts
+        updateAllCharts();
+        
+        console.log("  ✅ Bar charts created!");
+        console.log("  📊 Active charts:", Object.keys(chartInstances));
+    }, 800);  // Increased delay for better rendering
+} else { // Switch BACK to TABLE mode
+    console.log("📋 Switching to TABLE mode...");
+    
+    // Hide graph
+    if (graphView) {
+        graphView.classList.add('hidden');
+        graphView.style.display = 'none';
+        console.log("  ✅ Graph hidden");
+    }
+    
+    // Show table
+    if (tableView) {
+        tableView.classList.remove('hidden');
+        tableView.style.display = 'block';
+        console.log("  ✅ Table shown");
+    }
+    
+    // Update button text back to Graph Mode
+    toggleBtn.innerHTML = '<i class="fas fa-chart-bar"></i> Graph Mode';
+    
+    console.log("  ✅ Switched back to table mode!");}
+}); 
+} 
 //-------------------------------Export Data Functionality-------------------------------
 function initializeExportButton() {
     const exportButton = document.getElementById('export-button');
-
-    // CRITICAL: Checks for null before attaching the listener
+    
     if (exportButton) {
         exportButton.addEventListener('click', () => {
-            console.log("Export button successfully clicked.");
-
-            const activeButton = document.querySelector('.time-range-btn.active');
-            const range = activeButton ? activeButton.getAttribute('data-range') : '24h';
-
-            // FIX: Use the correct function name: fetchAndExportData
-            fetchAndExportData(range); // <--- THIS WAS THE ERROR
-        });
-    } else {
-        console.error("Initialization Error: Export button with ID 'export-button' not found.");
-    }
-}
-
-function initializePumpControls() {
-    const pumpSwitch = document.getElementById('pump-switch');
-    const savedStatus = localStorage.getItem('pumpStatus');
-    const initialStatus = savedStatus === 'on' ? 'on' : 'off';
-
-
-    setPumpStatus(initialStatus);
-
-
-    pumpSwitch.addEventListener('change', function () {
-        setPumpStatus(this.checked ? 'on' : 'off');
-    });
-
-}
-/**
- * Fetches data for the specified time range and exports it as CSV.
- * @param {string} range - The time range ('1h', '6h', '24h', '7d').
- */
-async function fetchAndExportData(range) {
-    // 1. Calculate the start timestamp (unchanged from previous step)
-    const now = Date.now();
-    let startTime;
-    let fileNameRange = range;
-
-    switch (range) {
-        case '1h': startTime = now - (60 * 60 * 1000); break;
-        case '6h': startTime = now - (6 * 60 * 60 * 1000); break;
-        case '24h':
-        default:
-            startTime = now - (24 * 60 * 60 * 1000);
-            fileNameRange = '24h';
-            break;
-        case '7d': startTime = now - (7 * 24 * 60 * 60 * 1000); break;
-    }
-
-    // 2. Build the query (unchanged)
-    const exportQuery = query(
-        ref(db, dbPath),
-        orderByChild('timestamp'), // REQUIRES your data nodes to have a 'timestamp' field
-        startAt(startTime)
-    );
-
-    window.showPopup(`Naghahanda ng ${range} data para i-export...`);
-
-    try {
-        onValue(exportQuery, (snapshot) => {
-            let dataToExport = [];
-            snapshot.forEach((childSnapshot) => {
-                dataToExport.push(childSnapshot.val());
-            });
-
-            if (dataToExport.length === 0) {
-                window.showPopup("Walang natagpuang data sa loob ng napiling hanay ng oras.");
-                return;
+            if (latestHistoryData && latestHistoryData.length > 0) {
+                exportDataToCSV(latestHistoryData, currentTimeRange);
+            } else {
+                alert('Walang data na mai-export. Subukang pumili ng ibang time range.');
             }
-
-            // 3. Process and export the fetched data
-            exportDataToCSV(dataToExport, fileNameRange);
-
-        }, { onlyOnce: true });
-    } catch (error) {
-        console.error("Error fetching data for export:", error);
-        window.showPopup("May error sa pag-fetch ng data.");
+        });
     }
 }
+
+// Enhanced CSV export with better formatting
+function exportDataToCSV(dataArray, range) {
+    if (dataArray.length === 0) {
+        alert('Walang data na mai-export.');
+        return;
+    }
+    
+    // Define CSV headers
+    const headers = [
+        "Date Time",
+        "Soil Moisture (%)",
+        "Humidity (%)",
+        "Temperature (°C)",
+        "Light Status",
+        "pH Level"
+    ];
+    
+    // Start CSV content
+    let csvContent = headers.join(',') + '\n';
+    
+    // Add data rows
+    dataArray.forEach(row => {
+        const formattedTimestamp = formatTimestamp(row.timestamp || row.id);
+        const quotedTimestamp = `"${formattedTimestamp}"`;
+        
+        const rowData = [
+            quotedTimestamp,
+            row.soilMoisture || row.moisture || '',
+            row.humidity || '',
+            row.temperature || '',
+            row.lightStatus || row.light || '',
+            row.phLevel || row.pH || ''
+        ];
+        csvContent += rowData.join(',') + '\n';
+    });
+    
+    // Create and trigger download
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.setAttribute('hidden', '');
+    a.setAttribute('href', url);
+    
+    const dateStr = new Date().toISOString().split('T')[0];
+    const timeStr = new Date().toTimeString().split(' ')[0].replace(/:/g, '-');
+    a.setAttribute('download', `agriknows-data-${range}-${dateStr}-${timeStr}.csv`);
+    
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    
+    // Show success notification
+    showNotification(`Matagumpay na na-export ang ${dataArray.length} entries!`, 'on');
+}
+
+// ==================== CALL INITIALIZATION ON PAGE LOAD ====================
+// Add this to your existing DOMContentLoaded or initialization code
+document.addEventListener('DOMContentLoaded', () => {
+    // ... your existing initialization code ...
+    
+    // Initialize enhanced data history
+    initializeDataHistory();
+});
+
 //------------------------------- Irrigation/Pump Control Functionality-------------------------------
-function setPumpStatus(status) {
-    const pumpSwitch = document.getElementById('pump-switch');
-    // *** Save state to localStorage ***
-    localStorage.setItem('pumpStatus', status);
-    if (status === 'on') {
-        pumpSwitch.checked = true;
-    } else {
-        pumpSwitch.checked = false;
-    }
 
-    const message = status === 'on' ? 'Water pump turned ON' : 'Water pump turned OFF';
-    // Only show notification if the change came from an active element (user click)
-    if (document.activeElement === pumpSwitch) {
-        showNotification(message, status);
-    }
-}
+
+
+
+
+
+
+//------------------------------- Irrigation notifcation-------------------------------
 function showNotification(message, type) {
     // Create notification element
     const notification = document.createElement('div');
@@ -977,7 +1645,6 @@ function showNotification(message, type) {
         <i class="fas fa-${type === 'on' ? 'check-circle' : 'times-circle'}"></i>
         ${message}
     `;
-    // Add styles for notification
     notification.style.cssText = `
         position: fixed;
         top: 20px;
@@ -1004,199 +1671,177 @@ function showNotification(message, type) {
 // ---------------------Chart Initialization-----------------------------
 function updateAllCharts() {
     if (!latestHistoryData || latestHistoryData.length === 0) return;
-
-    // FIX: Use .slice(-10) to get the 10 MOST RECENT entries.
-    // Do NOT use .reverse() here so time flows left-to-right (oldest to newest).
-    const dataToGraph = [...latestHistoryData].slice(-10);
-
+    
+    // Get last 15 data points for better visualization
+    const dataToGraph = [...latestHistoryData].slice(-15).reverse();
+    
     // Extract Labels (Time)
     const labels = dataToGraph.map(d => {
         const timeStr = formatTimestamp(d.timestamp || d.id);
         const parts = timeStr.split(' ');
-        // Return only the time (e.g., "07:46:54 PM") to keep the graph clean
-        if (parts.length >= 2) return parts.slice(1).join(' '); 
+        // Return only the time part
+        if (parts.length >= 2) return parts.slice(1).join(' ');
         return timeStr;
     });
-
-    // Extract Data Values - ensuring compatibility with Firebase keys
+    
+    // Extract Data Values
     const moistureData = dataToGraph.map(d => d.soilMoisture || d.moisture || 0);
     const humidityData = dataToGraph.map(d => d.humidity || 0);
     const tempData = dataToGraph.map(d => d.temperature || 0);
     const phData = dataToGraph.map(d => d.pH || d.phLevel || 0);
-
-    // Render each chart
-    renderChart('soil-moisture-chart', 'Pagkabasa ng Lupa (%)', labels, moistureData, '#3498db', 0, 100, 10);
-    renderChart('humidity-chart', 'Halumigmig (%)', labels, humidityData, '#2980b9', 0, 100, 10);
-    renderChart('temperature-chart', 'Temperatura (°C)', labels, tempData, '#e74c3c', 0, 100, 10);
-    renderChart('ph-level-chart', 'Antas ng pH', labels, phData, '#9b59b6', 0, 14, 2);
+    
+    // Render each chart with enhanced styling
+    renderEnhancedChart('soil-moisture-chart', 'Pagkabasa ng Lupa (%)', labels, moistureData, '#3498db', 0, 100, 10);
+    renderEnhancedChart('humidity-chart', 'Halumigmig (%)', labels, humidityData, '#2980b9', 0, 100, 10);
+    renderEnhancedChart('temperature-chart', 'Temperatura (°C)', labels, tempData, '#e74c3c', 0, 50, 5);
+    renderEnhancedChart('ph-level-chart', 'Antas ng pH', labels, phData, '#9b59b6', 0, 14, 2);
 }
-// NOTE: Added yMin, yMax, yStep to the function signature
-function renderChart(canvasId, label, labels, data, color, yMin, yMax, yStep) {
+function renderEnhancedChart(canvasId, label, labels, data, color, yMin, yMax, yStep) {
     const ctxElement = document.getElementById(canvasId);
-    if (!ctxElement) return;
-
+    if (!ctxElement) {
+        console.warn("Canvas not found:", canvasId);
+        return;
+    }
+    
+    console.log("📊 Creating chart:", canvasId, "with", data.length, "data points");
+    
     const ctx = ctxElement.getContext('2d');
-
-    // CRITICAL: Destroy old chart instance if it exists
+    
+    // Destroy old chart instance if it exists
     if (chartInstances[canvasId]) {
         chartInstances[canvasId].destroy();
+        console.log("  🗑️ Old chart destroyed");
     }
-
-    // Create new Chart instance
+    
+    // Create new Chart instance with BAR TYPE
     chartInstances[canvasId] = new Chart(ctx, {
-        type: 'bar',
+        type: 'bar',  // ← CHANGED FROM 'line' TO 'bar'
         data: {
             labels: labels,
             datasets: [{
                 label: label,
                 data: data,
-                backgroundColor: color + '80',
+                backgroundColor: color + '99',  // Semi-transparent bars
                 borderColor: color,
-                borderWidth: 1,
-                borderRadius: 4
+                borderWidth: 2,
+                borderRadius: 6,  // Rounded corners on bars
+                borderSkipped: false
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: {
+                intersect: false,
+                mode: 'index'
+            },
             scales: {
                 y: {
-                    // APPLYING THE FIXED SCALE RANGES AND STEPS HERE:
-                    min: yMin,      // Sets the Y-axis minimum (e.g., 0)
-                    max: yMax,      // Sets the Y-axis maximum (e.g., 100 or 14)
+                    min: yMin,
+                    max: yMax,
                     beginAtZero: true,
-                    grid: { color: 'rgba(0,0,0,0.05)' },
+                    grid: {
+                        color: 'rgba(0,0,0,0.05)',
+                        drawBorder: false
+                    },
                     ticks: {
-                        stepSize: yStep, // Sets the interval between ticks (e.g., 10 or 2)
-                        color: '#555',
-                        font: { size: 11 }
+                        stepSize: yStep,
+                        color: '#6b7280',
+                        font: { size: 12, weight: '500' },
+                        padding: 8,
+                        callback: function(value) {
+                            return value + (label.includes('°C') ? '°C' : label.includes('pH') ? '' : '%');
+                        }
                     },
                     title: {
                         display: true,
-                        text: 'Value'
+                        text: 'Value',
+                        color: '#374151',
+                        font: { size: 13, weight: '600' }
                     }
                 },
                 x: {
                     display: true,
-                    grid: { display: false },
+                    grid: {
+                        display: false,
+                        drawBorder: false
+                    },
                     ticks: {
-                        color: '#555',
-                        font: { size: 10 },
+                        color: '#6b7280',
+                        font: { size: 11, weight: '500' },
                         maxRotation: 45,
-                        minRotation: 0
+                        minRotation: 45
                     },
                     title: {
                         display: true,
-                        text: 'Oras'
+                        text: 'Oras',
+                        color: '#374151',
+                        font: { size: 13, weight: '600' }
                     }
                 }
             },
             plugins: {
-                legend: { display: false },
+                legend: {
+                    display: false  // Hide legend for cleaner look
+                },
                 title: {
                     display: true,
                     text: label,
-                    font: { size: 14, weight: 'bold' },
-                    color: '#333',
-                    padding: { bottom: 10 }
+                    font: { size: 16, weight: 'bold' },
+                    color: '#1f2937',
+                    padding: { bottom: 15, top: 5 }
                 },
                 tooltip: {
+                    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                    padding: 12,
+                    titleFont: { size: 13, weight: 'bold' },
+                    bodyFont: { size: 12 },
+                    bodySpacing: 4,
+                    borderColor: color,
+                    borderWidth: 2,
+                    displayColors: true,
                     callbacks: {
-                        label: function (context) {
-                            return context.parsed.y;
+                        label: function(context) {
+                            let value = context.parsed.y;
+                            let unit = '';
+                            if (label.includes('°C')) unit = '°C';
+                            else if (label.includes('pH')) unit = '';
+                            else unit = '%';
+                            return `${label}: ${value.toFixed(1)}${unit}`;
                         }
                     }
                 }
             }
         }
     });
+    
+    console.log("  ✅ Bar chart created:", canvasId);
+}
+// ==================== AUTO-REFRESH FUNCTIONALITY ====================
+function initializeAutoRefresh() {
+    // Auto-refresh every 30 seconds
+    autoRefreshInterval = setInterval(() => {
+        if (!isGraphMode) {
+            showRefreshIndicator();
+            loadHistoryData(currentTimeRange);
+            
+            setTimeout(() => {
+                hideRefreshIndicator();
+            }, 1500);
+        }
+    }, 30000); // 30 seconds
 }
 
-
-
-/**
- * Converts the provided data array into a CSV file and triggers download.
- * @param {Array<Object>} dataArray - The sensor data to export.
- * @param {string} range - The time range used for the filename.
- */
-function exportDataToCSV(dataArray, range) {
-    if (dataArray.length === 0) {
-        alert('Walang data na mai-export.');
-        return;
+function showRefreshIndicator() {
+    const indicator = document.getElementById('refresh-indicator');
+    if (indicator) {
+        indicator.classList.add('active');
     }
-
-    // Define the CSV header based on your table columns
-    const headers = [
-        "timestamp",
-        "Pagkabasa ng Lupa (moisture)",
-        "Halumigmig (humidity)",
-        "Temperatura (temperature)",
-        "Light Status (light)",
-        "Antas ng pH (phLevel)"
-    ];
-
-    // Start CSV content with headers
-    let csvContent = headers.join(',') + '\n';
-
-    // Map the data array to CSV rows
-    dataArray.forEach(row => {
-        const formattedTimestamp = formatTimestamp(row.timestamp || row.id);
-        // 1. Enclose the timestamp in double quotes (")
-        const quotedTimestamp = `"${formattedTimestamp}"`;
-
-        const rowData = [
-            quotedTimestamp, // Use the quoted timestamp for CSV safety
-            row.soilMoisture || row.moisture || '',
-            row.humidity || '',
-            row.temperature || '',
-            row.lightStatus || row.light || '',
-            row.phLevel || row.pH || ''
-        ];
-        csvContent += rowData.join(',') + '\n';
-    });
-
-    // Create and trigger the download
-    const blob = new Blob([csvContent], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.setAttribute('hidden', '');
-    a.setAttribute('href', url);
-    // Use the fetched time range in the filename
-    a.setAttribute('download', `agriknows-data-${range}-${new Date().toISOString().split('T')[0]}.csv`);
-
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-
-    alert(`Tagumpay na na-export ang ${dataArray.length} entries (${range})!`);
 }
 
-function updateSoilMoistureStatus(moistureLevel) {
-    const statusElement = document.getElementById('soil-moisture-status');
-    let status, message, className;
-
-    if (moistureLevel < 20) {
-        status = 'Sobrang tuyo';
-        message = 'Kailangan agad ng Patubig';
-        className = 'status-dry';
-    } else if (moistureLevel < 40) {
-        status = 'Tuyot';
-        message = 'Kailangan ng Patubig';
-        className = 'status-moderate';
-    } else if (moistureLevel < 60) {
-        status = 'Mainam';
-        message = 'Perpektong kondition ng pag kabasa ng lupa';
-        className = 'status-optimal';
-    } else if (moistureLevel < 80) {
-        status = 'Basa';
-        message = 'Sapat na kahalumigmigan';
-        className = 'status-wet';
-    } else {
-        status = 'Sobra sa tubig';
-        message = 'Bawasan ang Tubig';
-        className = 'status-saturated';
+function hideRefreshIndicator() {
+    const indicator = document.getElementById('refresh-indicator');
+    if (indicator) {
+        indicator.classList.remove('active');
     }
-
-    statusElement.textContent = `${status}: ${message}`;
-    statusElement.className = `status-message ${className}`;
 }
