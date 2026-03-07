@@ -26,6 +26,18 @@
       <!--button and text field-->
       <form action="{{ url('/register') }}" method="post">
         @csrf
+        @if ($errors->any())
+          <p style="color:red;">{{ $errors->first() }}</p>
+        @endif
+
+        @if(session('error'))
+          <p style="color:red;">{{ session('error') }}</p>
+        @endif
+
+        @if(session('success'))
+          <p style="color:green;">{{ session('success') }}</p>
+        @endif
+
         <div class="field input">
             <label for="username">Username</label>
             <input type="text" name="username" id="username" autocomplete="username" required>
@@ -54,7 +66,7 @@
       <a href="/login">Log In</a>
     </p>
     <div class="authenticationBTN">
-      <button id="google-login-btn">
+      <button id="google-login-btn" type="button">
         <img src="{{ asset('images/google.png') }}" alt="Google">
       </button>
     </div>

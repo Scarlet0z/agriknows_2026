@@ -20,10 +20,33 @@
                 <h1>AGRIKNOWS</h1>
             </div>
 
+            @php
+                $sessionUser = session('user', []);
+                $displayName = $sessionUser['username'] ?? 'User';
+                $displayEmail = $sessionUser['email'] ?? '';
+            @endphp
+
             <div class="header-right">
-                <div class="header-right">
-                <img src="{{ asset('images/profile.png') }}" class="user-profile" alt="User Profile"
-                    onclick="window.location.href='{{ url('/user-setting') }}'">
+                <div style="text-align: right; margin-right: 10px;">
+                    <div>{{ $displayName }}</div>
+                    <small>{{ $displayEmail }}</small>
+                </div>
+                <div class="header-icons">
+                    <button id="notificationBell" class="notif-bell-btn" type="button" aria-label="Notifications">
+                        <i class="fas fa-bell"></i>
+                        <span id="notificationBadge" class="notif-badge hidden">0</span>
+                    </button>
+                    <div id="notificationDropdown" class="notif-dropdown hidden">
+                        <div class="notif-dropdown-header">
+                            <h4>Notifications</h4>
+                        </div>
+                        <ul id="notificationList" class="notif-list">
+                            <li class="notif-empty">Wala pang notifications.</li>
+                        </ul>
+                    </div>
+                    <img src="{{ asset('images/profile.png') }}" class="user-profile" alt="User Profile"
+                        onclick="window.location.href='{{ url('/user-setting') }}'">
+                </div>
             </div>
         </header>
         <!-----------------------------------CROP MANAGEMENT------------------------------------>
@@ -83,29 +106,7 @@
                     </div>
                     <p> Pumili ng isang pananim upang itakda ang pinakamainam na kondisyon. Maaaring i-edit ang mga
                         pasadyang pananim.</p>
-                    <div class="crop-grid" id="cropGrid">
-                        <div class="crop-option" data-crop="corn">
-                            <i class="fas fa-seedling crop-icon-small"></i>
-                            <div class="crop-name-small">Corn</div>
-                        </div>
-                        <div class="crop-option" data-crop="rice">
-                            <i class="fas fa-seedling crop-icon-small"></i>
-                            <div class="crop-name-small">Rice</div>
-                        </div>
-                        <div class="crop-option" data-crop="eggplant">
-                            <i class="fas fa-seedling crop-icon-small"></i>
-                            <div class="crop-name-small">Eggplant</div>
-                        </div>
-                        <div class="crop-option" data-crop="tomato">
-                            <i class="fas fa-seedling crop-icon-small"></i>
-                            <div class="crop-name-small">Tomato</div>
-                        </div>
-                        <div class="crop-option" data-crop="onion">
-                            <i class="fas fa-seedling crop-icon-small"></i>
-                            <div class="crop-name-small">Onion</div>
-                        </div>
-        
-                    </div>
+                    <div class="crop-grid" id="cropGrid"></div>
                     <button id="confirmCropBtn" class="btn-confirm" style="width: 100%; margin-top: 20px;">
                         <i class="fas fa-check"></i> Kumpirmahin
                     </button>
