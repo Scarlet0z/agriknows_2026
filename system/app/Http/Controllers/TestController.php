@@ -21,6 +21,7 @@ class TestController extends Controller
     // READ DATA
     public function showHistory()
     {
+        // return 1;
         $sensordata = $this->database
             ->getReference('sensorData')
             ->getValue();

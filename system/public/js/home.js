@@ -1,12 +1,16 @@
 import {
     getDatabase,
     ref,
+    get,
     onValue,
     query,
+    equalTo,
     limitToLast,
     orderByChild,
     startAt,
     set,
+    update,
+    remove,
     push,
 } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-database.js";
 import {
@@ -59,6 +63,107 @@ const auth = getAuth(app);
 const database = getDatabase(app);
 const db = getDatabase(app);
 const dbPath = "sensorData";
+let cachedSessionUser = null;
+
+async function getSessionUser() {
+    if (cachedSessionUser) {
+        return cachedSessionUser;
+    }
+
+    try {
+        const response = await fetch("/get-user", {
+            headers: { Accept: "application/json" },
+        });
+
+        if (!response.ok) {
+            return null;
+        }
+
+        const sessionUser = await response.json();
+        cachedSessionUser = sessionUser || null;
+        return cachedSessionUser;
+    } catch (error) {
+        console.error("Failed to fetch session user:", error);
+        return null;
+    }
+}
+
+async function getResolvedUser() {
+    if (auth.currentUser?.uid) {
+        return {
+            uid: auth.currentUser.uid,
+            email: auth.currentUser.email || null,
+        };
+    }
+
+    const sessionUser = await getSessionUser();
+    if (sessionUser?.id) {
+        return {
+            uid: sessionUser.id,
+            email: sessionUser.email || null,
+        };
+    }
+
+    return null;
+}
+
+function getUserCropsQuery(userId) {
+    return query(ref(db, "crop"), orderByChild("user_id"), equalTo(userId));
+}
+
+function isRecordOwnedByUser(record, userId) {
+    if (!record || !userId) {
+        return false;
+    }
+
+    const ownerId = record.user_id || record.userId || record.uid || null;
+    return String(ownerId || "") === String(userId);
+}
+
+function decodePushIdTimestamp(pushId) {
+    const PUSH_CHARS = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+
+    if (!pushId || pushId.length < 8) {
+        return 0;
+    }
+
+    let timestamp = 0;
+    for (let i = 0; i < 8; i += 1) {
+        const charIndex = PUSH_CHARS.indexOf(pushId.charAt(i));
+        if (charIndex < 0) {
+            return 0;
+        }
+        timestamp = timestamp * 64 + charIndex;
+    }
+
+    return timestamp;
+}
+
+function getRecordTimestamp(record, fallbackId = "") {
+    if (!record) {
+        return 0;
+    }
+
+    if (typeof record.timestamp === "number" && Number.isFinite(record.timestamp)) {
+        return record.timestamp;
+    }
+
+    if (typeof record.timestamp === "string") {
+        const parsed = Date.parse(record.timestamp);
+        if (Number.isFinite(parsed)) {
+            return parsed;
+        }
+    }
+
+    if (typeof record.createdAt === "string") {
+        const parsedCreated = Date.parse(record.createdAt);
+        if (Number.isFinite(parsedCreated)) {
+            return parsedCreated;
+        }
+    }
+
+    return decodePushIdTimestamp(fallbackId || record.id || "");
+}
 
 // ==================== LOAD USER CROPS FOR MONITORING ====================
 async function loadUserCropsForMonitoring() {
@@ -73,8 +178,8 @@ async function loadUserCropsForMonitoring() {
     const userId = auth.currentUser.uid;
 
     try {
-        // Load custom crops from Firebase
-        const userCropsRef = ref(db, `users/${userId}/customCrops`);
+        // Load custom crops from Firebase top-level crop node
+        const userCropsRef = getUserCropsQuery(userId);
 
         onValue(
             userCropsRef,
@@ -125,6 +230,9 @@ onAuthStateChanged(auth, (user) => {
     if (user) {
         console.log("✅ User is logged in:", user.uid);
         console.log("Email:", user.email);
+        loadHistoryData(currentTimeRange);
+        currentNotificationUserId = user.uid;
+        startNotificationListener();
     } else {
         console.log("❌ No user logged in");
     }
@@ -165,6 +273,20 @@ let chartInstances = {}; // Store Chart.js instances to manage updates
 let currentTimeRange = "1h";
 let isGraphMode = false;
 let autoRefreshInterval = null;
+let sensorNotifications = [];
+let unreadNotificationCount = 0;
+let sensorAlertStates = {};
+let notificationListenerStarted = false;
+let currentNotificationUserId = null;
+let lastPopupTime = {};
+const POPUP_COOLDOWN = 60 * 1000;
+
+const DEFAULT_SENSOR_THRESHOLDS = {
+    temperature: { min: 18, max: 32 },
+    moisture: { min: 40, max: 80 },
+    humidity: { min: 40, max: 80 },
+    ph: { min: 5.5, max: 7.5 },
+};
 
 // Crop data with optimal environmental conditions (Predefined part)
 const PREDEFINED_CROP_DATA = {
@@ -210,8 +332,8 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("saveBtn").addEventListener("click", saveData);
 });
 
-function saveData() {
-    const user = auth.currentUser;
+async function saveData() {
+    const user = await getResolvedUser();
 
     // ===== CRITICAL DEBUG =====
     console.log("🔍 === SAVE CROP DEBUG ===");
@@ -220,7 +342,7 @@ function saveData() {
     if (user) {
         console.log("User UID:", user.uid);
         console.log("User Email:", user.email);
-        console.log("Database Path:", `users/${user.uid}/customCrops/`);
+        console.log("Database Path:", `crop/ (filtered by user_id=${user.uid})`);
     } else {
         console.log("⚠️ NO USER LOGGED IN!");
         alert("Please login first!");
@@ -269,12 +391,34 @@ function saveData() {
         return;
     }
 
-    // IMPORTANT: Save to users/{user.uid}/customCrops/{cropName}
-    // This ensures it's under the SAME UID as email/username
-    const cropRef = ref(db, `users/${user.uid}/customCrops/${cropName}`);
+    // Prevent duplicate crop names for the same user
+    const customCropsRef = getUserCropsQuery(user.uid);
+
+    try {
+        const existingSnapshot = await get(customCropsRef);
+        const existingCrops = existingSnapshot.val() || {};
+        const normalizedCropName = cropName.trim().toLowerCase();
+
+        const hasDuplicate = Object.values(existingCrops).some((crop) => {
+            const existingName = (crop?.name || "").trim().toLowerCase();
+            return existingName === normalizedCropName;
+        });
+
+        if (hasDuplicate) {
+            showPopup("May kaparehong pangalan na ng pananim. Gumamit ng ibang pangalan.");
+            return;
+        }
+    } catch (error) {
+        console.error("Error checking existing crops:", error);
+    }
+
+    // Add as a NEW record under top-level crop
+    const cropRef = push(ref(db, "crop"));
+    const cropKey = cropRef.key;
 
     const cropData = {
         name: cropName,
+        user_id: user.uid,
         temp: {
             min: tempMin,
             max: tempMax,
@@ -295,7 +439,11 @@ function saveData() {
     };
 
     set(cropRef, cropData)
-        .then(() => {
+        .then(async () => {
+            console.log(
+                `✅ Custom crop saved at crop/${cropKey}`,
+            );
+
             showPopup(
                 `Tagumpay! Naka-save na ang ${cropName} sa iyong account.`,
             );
@@ -303,8 +451,8 @@ function saveData() {
             document.getElementById("addCropModal").style.display = "none";
         })
         .catch((error) => {
-            console.error("Firebase Error:", error);
-            showPopup("Error saving: " + error.message);
+            console.error("Firebase Error (user path):", error);
+            showPopup("Error saving user crop: " + error.message);
         });
 }
 
@@ -340,9 +488,9 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 });
 
-// Function to load crops (predefined + custom from Firebase)
-function loadCropsInModal() {
-    const user = auth.currentUser;
+// Function to load only user-created crops from Firebase
+async function loadCropsInModal() {
+    const user = await getResolvedUser();
 
     if (!user) {
         console.log("No user logged in");
@@ -361,28 +509,27 @@ function loadCropsInModal() {
         return;
     }
 
-    // Reference to custom crops in Firebase
-    const cropsRef = ref(db, `users/${user.uid}/customCrops`);
+    // Show only user-created cards in this modal
+    grid.querySelectorAll(".crop-selection-card").forEach((card) => card.remove());
+    grid.querySelectorAll(".crop-selection-empty").forEach((node) => node.remove());
 
-    // Listen for custom crops
-    onValue(cropsRef, (snapshot) => {
-        const customCrops = snapshot.val();
+    try {
+        const snapshot = await get(getUserCropsQuery(user.uid));
+        const customCrops = snapshot.val() || {};
+        const cropKeys = Object.keys(customCrops);
 
-        // Remove existing custom cards
-        const existingCustom = grid.querySelectorAll(
-            '.crop-selection-card[data-custom="true"]',
-        );
-        existingCustom.forEach((card) => card.remove());
-
-        if (!customCrops) {
-            console.log("No custom crops");
+        if (cropKeys.length === 0) {
+            const emptyMessage = document.createElement("div");
+            emptyMessage.className = "crop-selection-empty";
+            emptyMessage.style.padding = "12px";
+            emptyMessage.style.textAlign = "center";
+            emptyMessage.textContent =
+                "Wala ka pang custom crop. Magdagdag muna ng pananim.";
+            grid.appendChild(emptyMessage);
             return;
         }
 
-        console.log(`Found ${Object.keys(customCrops).length} custom crops`);
-
-        // Add each custom crop
-        Object.keys(customCrops).forEach((cropKey) => {
+        cropKeys.forEach((cropKey) => {
             const crop = customCrops[cropKey];
 
             const card = document.createElement("div");
@@ -406,8 +553,11 @@ function loadCropsInModal() {
             grid.appendChild(card);
         });
 
-        console.log(`✅ Loaded custom crops`);
-    });
+        console.log(`✅ Loaded ${cropKeys.length} user-created crops`);
+    } catch (error) {
+        console.error("❌ Error loading user-created crops:", error);
+        showPopup("Hindi ma-load ang custom crops. I-check ang Firebase read rules para sa /crop.");
+    }
 }
 
 // Function to select a crop
@@ -517,14 +667,9 @@ document.addEventListener("DOMContentLoaded", function () {
 
 onAuthStateChanged(auth, (user) => {
     if (user) {
-        // User is signed in, so we can now safely call the function
-        console.log("User is signed in. Fetching data...");
-        listenToFirebaseData();
+        console.log("User is signed in.");
     } else {
-        // User is signed out. Redirect to login page or display a message.
-        console.log("User is signed out. Redirecting...");
-        // Example: window.location.replace('/pages/login.html');
-        // You can leave this out if your login page handles the unauthenticated state.
+        console.log("User is signed out.");
     }
 });
 
@@ -730,6 +875,8 @@ function setCrop(cropKey, cropInfo) {
         phOptimal.textContent = `Optimal: ${cropInfo.ph.min}-${cropInfo.ph.max}`;
     if (humidityOptimal)
         humidityOptimal.textContent = `Optimal: ${cropInfo.humidity.min}-${cropInfo.humidity.max}%`;
+
+    syncPumpControlForCurrentCrop();
 }
 function initializeEventListeners() {
     console.log("✅ Initializing event listeners...");
@@ -790,32 +937,123 @@ function updateSoilMoistureStatus(moistureLevel) {
         className = "status-saturated";
     }
 
-    statusElement.textContent = `${status}: ${message}`;
-    statusElement.className = `status-message ${className}`;
+    statusElement.className = `moisture-status ${className}`;
+    statusElement.innerHTML = `
+        <p>Pagkabasa ng lupa: <b>${status}</b></p>
+        <small>${message}</small>
+    `;
+}
+
+function getNoneCropData() {
+    return {
+        name: "Walang napiling pananim",
+        temperature: { min: 0, max: 0 },
+        moisture: { min: 0, max: 0 },
+        ph: { min: 0, max: 0 },
+        humidity: { min: 0, max: 0 },
+    };
+}
+
+async function loadActiveCropSelection() {
+    const user = await getResolvedUser();
+    if (!user) {
+        return;
+    }
+
+    try {
+        const snapshot = await get(ref(db, `users/${user.uid}/activeCrop`));
+        if (!snapshot.exists()) {
+            return;
+        }
+
+        const activeCrop = snapshot.val();
+        const cropKey = activeCrop.cropKey || `active_${user.uid}`;
+        const normalizedCrop = {
+            name: activeCrop.name || "Walang napiling pananim",
+            temperature: activeCrop.temperature || activeCrop.temp || { min: 0, max: 0 },
+            moisture: activeCrop.moisture || { min: 0, max: 0 },
+            ph: activeCrop.ph || { min: 0, max: 0 },
+            humidity: activeCrop.humidity || { min: 0, max: 0 },
+            isCustom: activeCrop.isCustom === true,
+            pump_status: activeCrop.pump_status || "off",
+        };
+
+        allCropData[cropKey] = normalizedCrop;
+        setCrop(cropKey, normalizedCrop);
+    } catch (error) {
+        console.error("Error loading active crop:", error);
+    }
+}
+
+function getSelectedCustomCropKey() {
+    if (!currentCropKey || currentCropKey === "none") {
+        return null;
+    }
+
+    const crop = allCropData[currentCropKey];
+    if (!crop || crop.isCustom !== true) {
+        return null;
+    }
+
+    return currentCropKey;
+}
+
+async function syncPumpControlForCurrentCrop() {
+    const cropKey = getSelectedCustomCropKey();
+
+    if (!cropKey) {
+        setPumpStatus("off");
+        return;
+    }
+
+    try {
+        const snapshot = await get(ref(db, `crop/${cropKey}`));
+        const cropData = snapshot.val() || {};
+        const status = cropData.pump_status === "on" ? "on" : "off";
+        setPumpStatus(status);
+    } catch (error) {
+        console.error("Error loading pump status for crop:", error);
+        setPumpStatus("off");
+    }
+}
+
+async function persistPumpStatusForCurrentCrop(status) {
+    const user = await getResolvedUser();
+    const cropKey = getSelectedCustomCropKey();
+
+    if (!user || !cropKey) {
+        return;
+    }
+
+    try {
+        await update(ref(db, `crop/${cropKey}`), {
+            pump_status: status,
+            user_id: user.uid,
+            updatedAt: new Date().toISOString(),
+        });
+
+        const cropInfo = allCropData[cropKey];
+        if (cropInfo) {
+            cropInfo.pump_status = status;
+        }
+    } catch (error) {
+        console.error("Error saving pump status for crop:", error);
+    }
 }
 
 function initializePumpControls() {
     const pumpSwitch = document.getElementById("pump-switch");
+    if (!pumpSwitch) return;
 
-    if (!pumpSwitch) {
-        console.warn("⚠️ Pump switch element not found");
-        return;
-    }
+    setPumpStatus("off");
 
-    // Get saved status from localStorage
-    const savedStatus = localStorage.getItem("pumpStatus");
-    const initialStatus = savedStatus === "on" ? "on" : "off";
-
-    // Set initial state
-    setPumpStatus(initialStatus);
-
-    // Add change listener
     pumpSwitch.addEventListener("change", function () {
         const newStatus = this.checked ? "on" : "off";
         setPumpStatus(newStatus);
+        persistPumpStatusForCurrentCrop(newStatus);
     });
 
-    console.log("✅ Pump controls initialized:", initialStatus);
+    console.log("✅ Pump controls initialized");
 }
 
 function setPumpStatus(status) {
@@ -823,11 +1061,10 @@ function setPumpStatus(status) {
 
     if (!pumpSwitch) return;
 
-    // Save to localStorage
-    localStorage.setItem("pumpStatus", status);
-
     // Update switch state
     pumpSwitch.checked = status === "on";
+
+    currentPumpStatus = status;
 
     // Show notification if user triggered it
     if (document.activeElement === pumpSwitch) {
@@ -872,6 +1109,8 @@ function showPumpNotification(message, type) {
 function initDashboard() {
     updateCurrentDate();
     loadAllCropData(); // **MODIFIED**: Load crop data (including custom) from storage
+    loadActiveCropSelection();
+    initializeNotificationBell();
     initializeEventListeners();
     updateSoilMoistureStatus(42);
     updateLightStatus("--");
@@ -893,8 +1132,333 @@ function initializeDataHistory() {
     // Load initial data
     loadHistoryData(currentTimeRange);
 }
+
+function initializeNotificationBell() {
+    const bell = document.getElementById("notificationBell");
+    const dropdown = document.getElementById("notificationDropdown");
+
+    if (!bell || !dropdown) {
+        return;
+    }
+
+    if (bell.dataset.initialized === "true") {
+        return;
+    }
+
+    bell.dataset.initialized = "true";
+
+    bell.addEventListener("click", (event) => {
+        event.stopPropagation();
+        dropdown.classList.toggle("hidden");
+
+        if (!dropdown.classList.contains("hidden")) {
+            unreadNotificationCount = 0;
+            updateNotificationBadge();
+        }
+    });
+
+    document.addEventListener("click", (event) => {
+        const clickedInsideBell = bell.contains(event.target);
+        const clickedInsideDropdown = dropdown.contains(event.target);
+
+        if (!clickedInsideBell && !clickedInsideDropdown) {
+            dropdown.classList.add("hidden");
+        }
+    });
+
+    renderNotifications();
+    updateNotificationBadge();
+    startNotificationListener();
+}
+
+async function startNotificationListener() {
+    if (notificationListenerStarted) {
+        return;
+    }
+
+    const user = await getResolvedUser();
+    if (!user?.uid) {
+        return;
+    }
+
+    currentNotificationUserId = user.uid;
+
+    const notificationsQuery = query(
+        ref(db, `users/${user.uid}/notifications`),
+        limitToLast(50),
+    );
+
+    onValue(
+        notificationsQuery,
+        (snapshot) => {
+            const loaded = [];
+
+            snapshot.forEach((childSnapshot) => {
+                const value = childSnapshot.val() || {};
+                loaded.push({
+                    id: childSnapshot.key,
+                    title: value.title || "Sensor Alert",
+                    message: value.message || "May bagong sensor alert.",
+                    timestamp:
+                        getRecordTimestamp(value, childSnapshot.key) ||
+                        Date.now(),
+                });
+            });
+
+            loaded.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            sensorNotifications = loaded.slice(0, 30);
+            renderNotifications();
+        },
+        (error) => {
+            console.error("Failed to load persisted notifications:", error);
+        },
+    );
+
+    notificationListenerStarted = true;
+}
+
+async function persistNotification(item) {
+    if (!currentNotificationUserId || !item) {
+        return;
+    }
+
+    try {
+        await push(ref(db, `users/${currentNotificationUserId}/notifications`), {
+            title: item.title,
+            message: item.message,
+            timestamp: item.timestamp || Date.now(),
+        });
+    } catch (error) {
+        console.error("Failed to persist notification:", error);
+    }
+}
+
+function updateNotificationBadge() {
+    const badge = document.getElementById("notificationBadge");
+    if (!badge) {
+        return;
+    }
+
+    if (unreadNotificationCount > 0) {
+        badge.textContent = unreadNotificationCount > 99 ? "99+" : String(unreadNotificationCount);
+        badge.classList.remove("hidden");
+    } else {
+        badge.classList.add("hidden");
+    }
+}
+
+function renderNotifications() {
+    const list = document.getElementById("notificationList");
+    if (!list) {
+        return;
+    }
+
+    list.innerHTML = "";
+
+    if (sensorNotifications.length === 0) {
+        const emptyItem = document.createElement("li");
+        emptyItem.className = "notif-empty";
+        emptyItem.textContent = "Wala pang notifications.";
+        list.appendChild(emptyItem);
+        return;
+    }
+
+    sensorNotifications.forEach((item) => {
+        const li = document.createElement("li");
+        li.className = "notif-item";
+
+        const title = document.createElement("div");
+        title.className = "notif-title";
+        title.textContent = item.title;
+
+        const message = document.createElement("div");
+        message.className = "notif-meta";
+        message.textContent = item.message;
+
+        const time = document.createElement("div");
+        time.className = "notif-meta";
+        time.textContent = formatTimestamp(item.timestamp);
+
+        li.appendChild(title);
+        li.appendChild(message);
+        li.appendChild(time);
+        list.appendChild(li);
+    });
+}
+
+function getAlertStatus(value, min, max) {
+    if (!Number.isFinite(value)) {
+        return "normal";
+    }
+
+    if (value < min) {
+        return "low";
+    }
+
+    if (value > max) {
+        return "high";
+    }
+
+    return "normal";
+}
+
+function getThresholdsForCurrentCrop() {
+    const activeCrop = allCropData[currentCropKey];
+
+    return {
+        temperature:
+            activeCrop?.temperature || DEFAULT_SENSOR_THRESHOLDS.temperature,
+        moisture: activeCrop?.moisture || DEFAULT_SENSOR_THRESHOLDS.moisture,
+        humidity: activeCrop?.humidity || DEFAULT_SENSOR_THRESHOLDS.humidity,
+        ph: activeCrop?.ph || DEFAULT_SENSOR_THRESHOLDS.ph,
+    };
+}
+
+function pushSensorAlert(metric, status, value, min, max) {
+    const metricLabelMap = {
+        ph: "pH Level",
+        temperature: "Temperature",
+        moisture: "Soil Moisture",
+        humidity: "Humidity",
+    };
+
+    const directionText = status === "low" ? "mababa" : "mataas";
+    const roundedValue = Number.isFinite(value) ? Number(value).toFixed(metric === "ph" ? 2 : 1) : "--";
+    const unitMap = {
+        ph: "",
+        temperature: "°C",
+        moisture: "%",
+        humidity: "%",
+    };
+
+    const metricLabel = metricLabelMap[metric] || metric;
+    const unit = unitMap[metric] || "";
+
+    const item = {
+        title: `${metricLabel} Alert`,
+        message: `${metricLabel} ay ${directionText}: ${roundedValue}${unit} (target ${min}-${max}${unit})`,
+        timestamp: Date.now(),
+    };
+
+    unreadNotificationCount += 1;
+    updateNotificationBadge();
+
+    if (!notificationListenerStarted) {
+        sensorNotifications.unshift(item);
+        if (sensorNotifications.length > 30) {
+            sensorNotifications = sensorNotifications.slice(0, 30);
+        }
+        renderNotifications();
+    }
+
+    showNotification(item.message, "off");
+    persistNotification(item);
+}
+
+function evaluateSensorAlerts(latestReading) {
+    if (!latestReading) {
+        return;
+    }
+
+    const thresholds = getThresholdsForCurrentCrop();
+
+    const values = {
+        ph: Number(latestReading.pH ?? latestReading.ph ?? latestReading.phLevel),
+        temperature: Number(latestReading.temperature),
+        moisture: Number(latestReading.soilMoisture ?? latestReading.moisture),
+        humidity: Number(latestReading.humidity),
+    };
+
+    Object.entries(values).forEach(([metric, value]) => {
+        const range = thresholds[metric] || DEFAULT_SENSOR_THRESHOLDS[metric];
+        const status = getAlertStatus(value, range.min, range.max);
+        const stateKey = `${currentCropKey || "none"}:${metric}`;
+        const previousStatus = sensorAlertStates[stateKey] || "normal";
+
+        if (status !== "normal" && status !== previousStatus) {
+            pushSensorAlert(metric, status, value, range.min, range.max);
+        }
+
+        sensorAlertStates[stateKey] = status;
+    });
+}
+
+async function addMockSensorData(overrides = {}) {
+    const user = await getResolvedUser();
+    if (!user?.uid) {
+        throw new Error("No logged in user. Please login first.");
+    }
+
+    const payload = {
+        temperature: 26.5,
+        soilMoisture: 62,
+        humidity: 68,
+        pH: 6.2,
+        light: "LIGHT",
+        timestamp: Date.now(),
+        user_id: user.uid,
+        ...overrides,
+    };
+
+    const newDataRef = push(ref(db, dbPath));
+    await set(newDataRef, payload);
+
+    console.log("✅ Mock sensor data added:", newDataRef.key, payload);
+    return { key: newDataRef.key, payload };
+}
+
+async function addMockNotificationTest(type = "ph-low") {
+    const scenarios = {
+        normal: {
+            temperature: 26,
+            soilMoisture: 65,
+            humidity: 65,
+            pH: 6.3,
+            light: "LIGHT",
+        },
+        "ph-low": {
+            pH: 4.6,
+            light: "DARK",
+        },
+        "ph-high": {
+            pH: 8.2,
+            light: "LIGHT",
+        },
+        "temp-high": {
+            temperature: 40.2,
+        },
+        "moisture-low": {
+            soilMoisture: 20,
+        },
+        "humidity-high": {
+            humidity: 93,
+        },
+    };
+
+    const selected = scenarios[type] || scenarios["ph-low"];
+    return addMockSensorData(selected);
+}
+
+async function addMockNotificationSequence() {
+    await addMockNotificationTest("normal");
+    setTimeout(() => {
+        addMockNotificationTest("ph-low").catch((error) => {
+            console.error("Failed to insert mock alert sequence:", error);
+        });
+    }, 1200);
+}
+
+window.addMockSensorData = addMockSensorData;
+window.addMockNotificationTest = addMockNotificationTest;
+window.addMockNotificationSequence = addMockNotificationSequence;
 //--------------------------------Firebase Data------------------------------------------
-function listenToFirebaseData() {
+async function listenToFirebaseData() {
+    const user = await getResolvedUser();
+    if (!user?.uid) {
+        showOfflineState();
+        return;
+    }
+
     const dataRef = ref(database, "sensorData");
     const readingsQuery = query(dataRef, limitToLast(50));
 
@@ -910,8 +1474,19 @@ function listenToFirebaseData() {
                 snapshot.forEach((childSnapshot) => {
                     const data = childSnapshot.val();
                     data.id = childSnapshot.key;
+                    data.timestamp = getRecordTimestamp(data, childSnapshot.key);
                     historyDataArray.push(data);
                 });
+
+                historyDataArray = historyDataArray.filter((row) =>
+                    isRecordOwnedByUser(row, user.uid),
+                );
+
+                if (historyDataArray.length === 0) {
+                    updateHistoryTable([]);
+                    showOfflineState();
+                    return;
+                }
 
                 // 2. Update Global Variables for the Graph
                 // We save the array here so updateAllCharts() can access it
@@ -945,6 +1520,7 @@ function listenToFirebaseData() {
                     // Device is active, update the UI cards
                     updateCurrentReadings(latestReading); // This is your old function
                     updateCurrentStatusCards(latestReading); // Add this line to call your NEW function
+                    evaluateSensorAlerts(latestReading);
                 }
             } else {
                 showOfflineState();
@@ -1050,14 +1626,45 @@ function updateHistoryTable(dataArray) {
 }
 // --- NEW: Function to update the top cards with the latest reading ---
 function updateCurrentStatusCards(latestData) {
-    document.querySelector(".reading-card .temperature + .value").textContent =
-        `${latestData.temperature || "N/A"} °C`;
-    document.querySelector(".reading-card .moisture + .value").textContent =
-        `${latestData.moisture || latestData.soilMoisture || "N/A"} %`;
-    document.querySelector(".reading-card .ph + .value").textContent =
-        `${latestData.ph || latestData.phLevel || "N/A"} pH`;
-    document.querySelector(".reading-card .humidity + .value").textContent =
-        `${latestData.humidity || "N/A"}%`;
+    if (!latestData) {
+        return;
+    }
+
+    const temperatureEl = document.getElementById("current-temperature");
+    const moistureEl = document.getElementById("current-soil-moisture");
+    const phEl = document.getElementById("current-ph-level");
+    const humidityEl = document.getElementById("current-humidity");
+
+    const temperature = latestData.temperature;
+    const moisture = latestData.moisture ?? latestData.soilMoisture;
+    const ph = latestData.ph ?? latestData.pH ?? latestData.phLevel;
+    const humidity = latestData.humidity;
+
+    if (temperatureEl) {
+        temperatureEl.textContent =
+            temperature === null || temperature === undefined
+                ? "N/A °C"
+                : `${temperature} °C`;
+    }
+
+    if (moistureEl) {
+        moistureEl.textContent =
+            moisture === null || moisture === undefined
+                ? "N/A %"
+                : `${moisture}%`;
+    }
+
+    if (phEl) {
+        phEl.textContent =
+            ph === null || ph === undefined ? "N/A pH" : `${ph} pH`;
+    }
+
+    if (humidityEl) {
+        humidityEl.textContent =
+            humidity === null || humidity === undefined
+                ? "N/A %"
+                : `${humidity}%`;
+    }
 
     // Update Soil Moisture Status Text
     updateSoilMoistureStatus(
@@ -1121,14 +1728,36 @@ function initializeModals() {
         }
     });
     // ---  Confirm Crop Selection Button ---
-    document.getElementById("confirmCropBtn").addEventListener("click", () => {
+    document.getElementById("confirmCropBtn").addEventListener("click", async () => {
         // Find the currently selected crop (which now includes custom ones)
         const selectedOption = document.querySelector(
             "#selectCropModal .crop-option.selected",
         );
         if (selectedOption) {
             const selectedCropKey = selectedOption.getAttribute("data-crop");
-            setCrop(selectedCropKey, allCropData[selectedCropKey]);
+            const selectedCropData = allCropData[selectedCropKey];
+            setCrop(selectedCropKey, selectedCropData);
+
+            const user = await getResolvedUser();
+            if (user && selectedCropData) {
+                try {
+                    await set(ref(db, `users/${user.uid}/activeCrop`), {
+                        cropKey: selectedCropKey,
+                        name: selectedCropData.name,
+                        temperature: selectedCropData.temperature,
+                        moisture: selectedCropData.moisture,
+                        ph: selectedCropData.ph,
+                        humidity: selectedCropData.humidity,
+                        pump_status:
+                            selectedCropData.pump_status === "on" ? "on" : "off",
+                        isCustom: selectedCropData.isCustom === true,
+                        updatedAt: new Date().toISOString(),
+                    });
+                } catch (error) {
+                    console.error("Error saving active crop:", error);
+                }
+            }
+
             selectCropModal.style.display = "none"; // Hide modal
             document
                 .querySelectorAll("#selectCropModal .crop-option")
@@ -1170,7 +1799,9 @@ function initializeModals() {
     });
 
     // --- **NEW** Edit Crop Form Submission ---
-    document.getElementById("editCropForm").addEventListener("submit", (e) => {
+    document
+        .getElementById("editCropForm")
+        .addEventListener("submit", async (e) => {
         e.preventDefault();
         const cropKey = document.getElementById("editCropKey").value;
         const cropName = document.getElementById("editCustomCropName").value;
@@ -1204,22 +1835,139 @@ function initializeModals() {
             humidity: { min: humidityMin, max: humidityMax },
             isCustom: true,
         };
+
+        const user = await getResolvedUser();
+        if (!user) {
+            showPopup("Mag-login muna bago mag-edit ng crop.");
+            return;
+        }
+
+        try {
+            await update(ref(db, `crop/${cropKey}`), {
+                name: updatedCrop.name,
+                user_id: user.uid,
+                temp: updatedCrop.temperature,
+                moisture: updatedCrop.moisture,
+                ph: updatedCrop.ph,
+                humidity: updatedCrop.humidity,
+                updatedAt: new Date().toISOString(),
+            });
+
+            allCropData[cropKey] = {
+                ...updatedCrop,
+                user_id: user.uid,
+            };
+
+            if (currentCropKey === cropKey) {
+                setCrop(cropKey, allCropData[cropKey]);
+            }
+
+            document.getElementById("editDeleteCropModal").style.display =
+                "none";
+            await renderCropOptions();
+            showPopup("Tagumpay! Na-update ang crop.");
+        } catch (error) {
+            console.error("Error updating crop:", error);
+            showPopup("Hindi ma-update ang crop: " + error.message);
+        }
     });
+
+    if (deleteCropBtn) {
+        deleteCropBtn.addEventListener("click", async () => {
+            const cropKey = document.getElementById("editCropKey").value;
+            if (!cropKey) {
+                showPopup("Walang napiling crop para burahin.");
+                return;
+            }
+
+            const shouldDelete = window.confirm(
+                "Sigurado ka bang gusto mong burahin ang crop na ito?",
+            );
+            if (!shouldDelete) {
+                return;
+            }
+
+            const user = await getResolvedUser();
+            if (!user) {
+                showPopup("Mag-login muna bago magbura ng crop.");
+                return;
+            }
+
+            try {
+                await remove(ref(db, `crop/${cropKey}`));
+
+                delete allCropData[cropKey];
+
+                if (currentCropKey === cropKey) {
+                    setCrop("none", {
+                        name: "Walang napiling pananim",
+                        temperature: { min: 0, max: 0 },
+                        moisture: { min: 0, max: 0 },
+                        ph: { min: 0, max: 0 },
+                        humidity: { min: 0, max: 0 },
+                    });
+                }
+
+                document.getElementById("editDeleteCropModal").style.display =
+                    "none";
+                await renderCropOptions();
+                showPopup("Nabura na ang crop.");
+            } catch (error) {
+                console.error("Error deleting crop:", error);
+                showPopup("Hindi mabura ang crop: " + error.message);
+            }
+        });
+    }
 }
 
 // **NEW FUNCTION** to render all crop options in the modal
-function renderCropOptions() {
+async function renderCropOptions() {
     const cropGrid = document.querySelector("#selectCropModal .crop-grid");
+    if (!cropGrid) return;
+
     cropGrid.innerHTML = ""; // Clear existing content
 
-    // Iterate over all crops (predefined and custom)
-    Object.entries(allCropData).forEach(([key, crop]) => {
-        // Skip the initial 'none' crop
-        if (key === "none") return;
+    const user = await getResolvedUser();
+    if (!user) {
+        cropGrid.innerHTML = `<div class="crop-selection-empty" style="padding:12px;text-align:center;">Mag-login muna para makita ang iyong crops.</div>`;
+        allCropData = {};
+        return;
+    }
 
-        const isPredefined = !crop.isCustom;
+    let customCrops = {};
+    try {
+        const snapshot = await get(getUserCropsQuery(user.uid));
+        const rawCrops = snapshot.val() || {};
+
+        Object.entries(rawCrops).forEach(([key, crop]) => {
+            customCrops[key] = {
+                name: crop.name,
+                temperature: crop.temperature || crop.temp || { min: 0, max: 0 },
+                moisture: crop.moisture || { min: 0, max: 0 },
+                ph: crop.ph || { min: 0, max: 0 },
+                humidity: crop.humidity || { min: 0, max: 0 },
+                isCustom: true,
+                user_id: crop.user_id || user.uid,
+            };
+        });
+    } catch (error) {
+        console.error("Error loading user crops for modal:", error);
+        cropGrid.innerHTML = `<div class="crop-selection-empty" style="padding:12px;text-align:center;">Hindi ma-load ang iyong crops. I-check ang Firebase read rules para sa /crop.</div>`;
+        allCropData = {};
+        return;
+    }
+
+    allCropData = customCrops;
+
+    if (Object.keys(allCropData).length === 0) {
+        cropGrid.innerHTML = `<div class="crop-selection-empty" style="padding:12px;text-align:center;">Wala ka pang custom crop. Magdagdag muna ng pananim.</div>`;
+        return;
+    }
+
+    // Iterate only user-created crops
+    Object.entries(allCropData).forEach(([key, crop]) => {
         const optionDiv = document.createElement("div");
-        optionDiv.className = `crop-option ${isPredefined ? "" : "custom"}`;
+        optionDiv.className = "crop-option custom";
         optionDiv.setAttribute("data-crop", key);
 
         // Add selected class if this crop is currently active
@@ -1232,16 +1980,14 @@ function renderCropOptions() {
             <div class="crop-name-small">${crop.name}</div>
         `;
 
-        // Add edit/delete button only for custom crops
-        if (!isPredefined) {
-            innerHTML += `
-                <div class="crop-actions">
-                    <button class="edit-btn" data-key="${key}">
-                        <i class="fas fa-edit"></i> Edit
-                    </button>
-                </div>
-            `;
-        }
+        // Add edit button for user-created crops
+        innerHTML += `
+            <div class="crop-actions">
+                <button class="edit-btn" data-key="${key}">
+                    <i class="fas fa-edit"></i> Edit
+                </button>
+            </div>
+        `;
 
         optionDiv.innerHTML = innerHTML;
 
@@ -1257,14 +2003,12 @@ function renderCropOptions() {
         });
 
         // Event listener for the Edit button
-        if (!isPredefined) {
-            const editBtn = optionDiv.querySelector(".edit-btn");
-            if (editBtn) {
-                editBtn.addEventListener("click", (e) => {
-                    e.stopPropagation(); // Stop click from propagating to the option div
-                    openEditDeleteModal(key);
-                });
-            }
+        const editBtn = optionDiv.querySelector(".edit-btn");
+        if (editBtn) {
+            editBtn.addEventListener("click", (e) => {
+                e.stopPropagation(); // Stop click from propagating to the option div
+                openEditDeleteModal(key);
+            });
         }
 
         cropGrid.appendChild(optionDiv);
@@ -1345,16 +2089,20 @@ function hideLoadingState() {
     const historyTable = document.getElementById("history-table");
     const table = historyTable.querySelector("table");
     const loadingDiv = historyTable.querySelector(".history-loading");
+    const emptyState = historyTable.querySelector(".history-empty");
 
     if (loadingDiv) loadingDiv.style.display = "none";
+    if (emptyState) emptyState.remove();
     if (table) table.style.display = "table";
 }
 
 function showEmptyState(range) {
     const historyTable = document.getElementById("history-table");
     const loadingDiv = historyTable.querySelector(".history-loading");
+    const table = historyTable.querySelector("table");
 
     if (loadingDiv) loadingDiv.style.display = "none";
+    if (table) table.style.display = "none";
 
     // Dynamic message based on time range
     let timeMessage = "";
@@ -1372,29 +2120,40 @@ function showEmptyState(range) {
             timeMessage = "sa nakaraang 7 araw";
             break;
         case "all":
-            timeMessage = "sa nakaraang buwan";
+            timeMessage = "sa lahat ng panahon";
             break;
         default:
             timeMessage = "sa napiling oras";
     }
 
-    historyTable.innerHTML = `
-        <div class="history-empty">
-            <i class="fas fa-database"></i>
-            <h3>Walang Nakuhang Data</h3>
-            <p>Walang natagpuang sensor readings ${timeMessage}.</p>
-        </div>
+    let emptyState = historyTable.querySelector(".history-empty");
+    if (!emptyState) {
+        emptyState = document.createElement("div");
+        emptyState.className = "history-empty";
+        historyTable.appendChild(emptyState);
+    }
+
+    emptyState.innerHTML = `
+        <i class="fas fa-database"></i>
+        <h3>Walang Nakuhang Data</h3>
+        <p>Walang natagpuang sensor readings ${timeMessage}.</p>
     `;
 }
 // ==================== ENHANCED DATA LOADING ====================
 async function loadHistoryData(range) {
+    const user = await getResolvedUser();
+    if (!user?.uid) {
+        showEmptyState(range);
+        return;
+    }
+
     const now = Date.now();
     let startTime;
     let limitCount = 100;
 
     if (range === "all") {
-        startTime = now - 30 * 24 * 60 * 60 * 1000;
-        limitCount = 500;
+        startTime = 0;
+        limitCount = 5000;
     } else
         switch (range) {
             case "1h":
@@ -1414,12 +2173,7 @@ async function loadHistoryData(range) {
                 startTime = now - 60 * 60 * 1000;
         }
 
-    const historyQuery = query(
-        ref(db, dbPath),
-        orderByChild("timestamp"),
-        startAt(startTime),
-        limitToLast(limitCount), // Use the dynamic limit
-    );
+    const historyQuery = query(ref(db, dbPath), limitToLast(limitCount));
 
     try {
         onValue(
@@ -1427,11 +2181,21 @@ async function loadHistoryData(range) {
             (snapshot) => {
                 let dataArray = [];
                 snapshot.forEach((childSnapshot) => {
+                    const raw = childSnapshot.val() || {};
                     dataArray.push({
                         id: childSnapshot.key,
-                        ...childSnapshot.val(),
+                        ...raw,
+                        timestamp: getRecordTimestamp(raw, childSnapshot.key),
                     });
                 });
+
+                dataArray = dataArray.filter((row) =>
+                    isRecordOwnedByUser(row, user.uid),
+                );
+
+                dataArray = dataArray.filter(
+                    (row) => (row.timestamp || 0) >= startTime,
+                );
 
                 // Sort by timestamp descending (newest first)
                 dataArray.sort(
@@ -2045,3 +2809,4 @@ function hideRefreshIndicator() {
         indicator.classList.remove("active");
     }
 }
+

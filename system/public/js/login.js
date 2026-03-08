@@ -1,5 +1,10 @@
 import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
 import {
+  getDatabase,
+  ref,
+  update,
+} from "https://www.gstatic.com/firebasejs/12.5.0/firebase-database.js";
+import {
   getAuth,
   signInWithEmailAndPassword,
   GoogleAuthProvider,
@@ -23,6 +28,44 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
+const db = getDatabase(app);
+
+async function ensureUserProfileInDatabase(user) {
+  const userRef = ref(db, `users/${user.uid}`);
+  const fallbackName = user.email ? user.email.split("@")[0] : "User";
+
+  await update(userRef, {
+    username: user.displayName || fallbackName,
+    email: user.email || "",
+    provider: user.providerData?.[0]?.providerId || "password",
+    last_login_at: new Date().toISOString(),
+  });
+}
+
+async function createLaravelSessionFromFirebaseUser(user) {
+  const idToken = await user.getIdToken();
+  const csrfToken = document.querySelector('input[name="_token"]')?.value;
+
+  const response = await fetch("/auth/firebase-login", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "X-CSRF-TOKEN": csrfToken || "",
+    },
+    body: JSON.stringify({
+      idToken,
+      name: user.displayName || null,
+    }),
+  });
+
+  const payload = await response.json();
+  if (!response.ok || !payload.ok) {
+    throw new Error(payload.message || "Server session login failed.");
+  }
+
+  return payload;
+}
 
 
 //show pass
@@ -53,57 +96,48 @@ const googleLoginBtn = document.getElementById("google-login-btn");
 if (googleLoginBtn) {
 const provider = new GoogleAuthProvider(); // Create a Google provider instance
 
-googleLoginBtn.addEventListener("click", (event) => {
+googleLoginBtn.addEventListener("click", async (event) => {
   event.preventDefault(); // Prevent default button behavior
 
-  signInWithPopup(auth, provider)
-      .then((result) => {
-          // This gives you a Google Access Token.
-          const credential = GoogleAuthProvider.credentialFromResult(result);
-          const token = credential.accessToken;
-          // The signed-in user info.
-          const user = result.user;
+  try {
+    const result = await signInWithPopup(auth, provider);
+    const user = result.user;
+    await ensureUserProfileInDatabase(user);
+    const payload = await createLaravelSessionFromFirebaseUser(user);
 
-          console.log("Signed in with Google:", user);
-          alert("Signed In Successfully with Google!");
-          window.location.href = "/welcome"; // Or just "/" depending on your web.php
-      })
-      .catch((error) => {
-          // Handle Errors here.
-          const errorCode = error.code;
-          const errorMessage = error.message;
-          console.error("Google Sign-In Error:", errorMessage);
-          alert(`Error: ${errorMessage}`);
-      });
+    window.location.href = payload.redirect || "/welcome";
+  } catch (error) {
+    console.error("Google Sign-In Error:", error);
+    alert(`Error: ${error.message}`);
+  }
 });
 }
 // ------------------------------------
 
-const submit = document.getElementById("submit");
-if (submit) { // Only add listener if the button exists
-    submit.addEventListener("click", function (event) {
-        event.preventDefault();
-        //inputs
-  const email = document.getElementById("email").value;
-  const password = document.getElementById("password").value;
+const loginForm = document.querySelector("form.login-form");
+if (loginForm) {
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
 
-  signInWithEmailAndPassword(auth, email, password)
-    .then((userCredential) => {
-      // Signed up
-      const user = userCredential.user;
-      alert("Signed In Successfully!");
-      window.location.href = "/welcome";
-      // ...
-    })
-    .catch((error) => {
-      const errorCode = error.code;
-      const errorMessage = error.message;
-      alert(errorMessage);
-      // ..
-    });
+    const email = document.getElementById("email")?.value?.trim();
+    const password = document.getElementById("password")?.value;
+
+    if (!email || !password) {
+      alert("Please enter email and password.");
+      return;
+    }
+
+    try {
+      const credential = await signInWithEmailAndPassword(auth, email, password);
+      await ensureUserProfileInDatabase(credential.user);
+      const payload = await createLaravelSessionFromFirebaseUser(credential.user);
+      window.location.href = payload.redirect || "/welcome";
+    } catch (error) {
+      console.error("Email login error:", error);
+      alert(error.message || "Login failed.");
+    }
+  });
 }
-)};
-
 
 //reset 
 const reset = document.getElementById("reset");

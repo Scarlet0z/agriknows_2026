@@ -1,4 +1,4 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
+import { initializeApp, getApps, getApp } from "https://www.gstatic.com/firebasejs/12.5.0/firebase-app.js";
 import {
   getAuth,
   signOut,
@@ -43,8 +43,9 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-const app = initializeApp(firebaseConfig);
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
+const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || "";
 
 
 setPersistence(auth, browserLocalPersistence)
@@ -80,26 +81,66 @@ const passwordToggles = document.querySelectorAll('.password-toggle');
 // Variable to hold the current user object
 let currentUser = null;
 
-// This checks if the user is logged in every time the page loads
-onAuthStateChanged(auth, async (user) => {
-  if (user) {
-    currentUser = user;
-    
-    // Try Auth Profile first
-    let displayName = user.displayName;
+async function syncLaravelSession(user, nameOverride = null) {
+    const idToken = await user.getIdToken(true);
 
-    // If Auth Profile is empty, fetch from Realtime Database
-    if (!displayName) {
-        const dbRef = ref(getDatabase(), `users/${user.uid}/username`);
-        const snapshot = await get(dbRef);
-        if (snapshot.exists()) {
-            displayName = snapshot.val();
-        }
+    const response = await fetch('/auth/firebase-login', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'X-CSRF-TOKEN': csrfToken,
+        },
+        body: JSON.stringify({
+            idToken,
+            name: nameOverride || user.displayName || null,
+        }),
+    });
+
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+        throw new Error(payload.message || 'Failed to sync session.');
     }
 
-    usernameInput.value = displayName || ""; 
-    emailInput.value = user.email || "";
-  }
+    return payload;
+}
+
+async function loadSessionUser() {
+    try {
+        const response = await fetch('/get-user', {
+            headers: { Accept: 'application/json' },
+        });
+
+        if (!response.ok) {
+            return;
+        }
+
+        const sessionUser = await response.json();
+        if (sessionUser) {
+            usernameInput.value = sessionUser.username || '';
+            emailInput.value = sessionUser.email || '';
+        }
+    } catch (error) {
+        console.error('Failed to load session user:', error);
+    }
+}
+
+loadSessionUser();
+
+// This checks if the user is logged in every time the page loads
+onAuthStateChanged(auth, async (user) => {
+    if (!user) {
+        return;
+    }
+
+    currentUser = user;
+    if (!usernameInput.value) {
+        usernameInput.value = user.displayName || '';
+    }
+
+    if (!emailInput.value) {
+        emailInput.value = user.email || '';
+    }
 });
 
 // --- NEW PASSWORD TOGGLE LOGIC ---
@@ -152,6 +193,7 @@ saveUserInfoBtn.addEventListener('click', async () => {
 if (updates.displayName) {
     try {
         await updateProfile(currentUser, updates); 
+        await syncLaravelSession(currentUser, newUsername);
         alert('Username updated successfully!');
         
         currentUser.displayName = newUsername; 
@@ -213,7 +255,7 @@ savePassBtn.addEventListener('click', async () => {
 document.getElementById('logout-btn').addEventListener('click', () => {
   signOut(auth).then(() => {
     alert('You have been logged out successfully.');
-    window.location.replace('/login'); 
+        window.location.replace('/logout'); 
   }).catch((error) => {
     alert('Error logging out: ' + error.message);
   });
